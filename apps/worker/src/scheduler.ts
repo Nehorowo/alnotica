@@ -23,19 +23,17 @@ import type { JobContext } from './jobs/context.js';
  * which releases the slot for everyone else.
  */
 export async function expirePending(ctx: JobContext): Promise<number> {
-  const nowMs = ctx.now();
-  const cutoff = new Date(nowMs - PENDING_TTL_MIN * 60_000);
+  const cutoff = new Date(ctx.now() - PENDING_TTL_MIN * 60_000);
   const tenants = await ctx.tenants.listActive();
 
   let expired = 0;
   for (const tenant of tenants) {
     if (tenant.autoConfirm) continue; // nothing is ever pending here
     const repo = forTenant(ctx.db, tenant.id);
-    const stale = await repo.appointments.listBetween(nowMs, nowMs + 365 * 86_400_000);
+    // Includes bookings whose start has already passed: an unconfirmed one that
+    // was simply never answered still has to release its slot and stop reminding.
+    const stale = await repo.appointments.pendingCreatedBefore(cutoff.getTime());
     for (const appointment of stale) {
-      if (appointment.status !== 'pending') continue;
-      if (appointment.createdAt > cutoff) continue;
-
       const updated = await repo.appointments.transition(appointment.id, ['pending'], 'expired');
       if (!updated) continue;
       expired++;

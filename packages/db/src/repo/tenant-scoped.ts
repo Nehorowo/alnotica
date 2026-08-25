@@ -624,6 +624,25 @@ export function forTenant(db: Database, tenantId: string) {
       return row?.n ?? 0;
     },
 
+    /**
+     * Unconfirmed bookings older than the cutoff. The expiry sweep runs every
+     * minute, so it asks for exactly these rather than scanning the calendar.
+     */
+    async pendingCreatedBefore(cutoffMs: number, limit = 100): Promise<AppointmentRow[]> {
+      return db
+        .select()
+        .from(appointment)
+        .where(
+          and(
+            eq(appointment.tenantId, tenantId),
+            eq(appointment.status, 'pending'),
+            lt(appointment.createdAt, new Date(cutoffMs)),
+          ),
+        )
+        .orderBy(asc(appointment.createdAt))
+        .limit(limit);
+    },
+
     /** Confirmed appointments whose end is in the past and that need a verdict. */
     async awaitingOutcome(beforeMs: number, limit = 100): Promise<AppointmentRow[]> {
       return db

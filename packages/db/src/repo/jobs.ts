@@ -86,7 +86,13 @@ export function jobRepo(db: Database) {
       // survive the wire protocol.
       const nowIso = now.toISOString();
       const staleIso = staleBefore.toISOString();
-      const rows = await db.execute<JobRow>(sql`
+      // The raw shape before the timestamps are converted below.
+      type RawJobRow = Omit<JobRow, 'runAt' | 'lockedAt' | 'finishedAt'> & {
+        runAt: string;
+        lockedAt: string | null;
+        finishedAt: string | null;
+      };
+      const rows = await db.execute<RawJobRow>(sql`
         UPDATE ${job}
            SET locked_at = ${nowIso}::timestamptz,
                locked_by = ${workerId},
@@ -106,11 +112,20 @@ export function jobRepo(db: Database) {
                   last_error AS "lastError", dedupe_key AS "dedupeKey",
                   cancel_key AS "cancelKey"
       `);
-      // UPDATE ... RETURNING gives no ordering guarantee, so the priority order the
-      // sub-select established is re-applied here before the jobs are handed out.
-      return [...rows].sort(
-        (a, b) =>
-          a.priority - b.priority || new Date(a.runAt).getTime() - new Date(b.runAt).getTime(),
+      // Raw SQL bypasses Drizzle's column mapping, so the timestamps arrive as
+      // text. Converting them here keeps `JobRow` honest: a field typed `Date`
+      // that is really a string is the kind of lie that bites three files away.
+      const claimed: JobRow[] = [...rows].map((row) => ({
+        ...row,
+        runAt: new Date(row.runAt),
+        lockedAt: row.lockedAt === null ? null : new Date(row.lockedAt),
+        finishedAt: row.finishedAt === null ? null : new Date(row.finishedAt),
+      }));
+
+      // UPDATE ... RETURNING gives no ordering guarantee, so the priority order
+      // the sub-select established is re-applied before the jobs are handed out.
+      return claimed.sort(
+        (a, b) => a.priority - b.priority || a.runAt.getTime() - b.runAt.getTime(),
       );
     },
 

@@ -41,7 +41,6 @@ import {
   monthBounds,
   nextStatus,
   occupiedSpan,
-  pendingExpiresAtMs,
   planReminders,
   reminderDedupeKey,
 } from '@alnotica/shared';
@@ -206,18 +205,6 @@ export async function scheduleAppointmentJobs(
       runAt: new Date(reminder.runAtMs),
       cancelKey,
       dedupeKey: reminderDedupeKey(appointment.id, reminder.offsetMin),
-    });
-  }
-
-  // An unconfirmed booking must not hold the slot forever.
-  if (appointment.status === 'pending') {
-    await deps.queue.enqueue({
-      kind: 'reminder',
-      payload: { kind: 'reminder', appointmentId: appointment.id, offsetMin: 1 },
-      priority: PRIORITY.transactional,
-      runAt: new Date(pendingExpiresAtMs(appointment.createdAt.getTime())),
-      cancelKey,
-      dedupeKey: `expire:${appointment.id}`,
     });
   }
 

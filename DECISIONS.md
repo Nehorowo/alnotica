@@ -233,3 +233,18 @@ list therefore carries `*.name`, `client.name` and `staff.name`, but not the bar
 deliberately *not* redacted: without them an incident cannot be traced at all,
 and an id on its own is not personal data in the way a name and a phone number
 are. A test asserts both halves of that.
+
+### D31. Expiry is a sweep, not a scheduled job
+The first draft scheduled a per-appointment job to expire an unconfirmed
+booking — as a `reminder` with a one-minute offset, which meant the reminder
+handler would have *sent a reminder* rather than expired anything. It is now a
+single indexed query in the minute sweep (`pendingCreatedBefore`), which also
+catches a booking whose start has already gone by: one that was simply never
+answered still has to release its slot and stop reminding.
+
+### D32. `claim` converts its own timestamps
+The claim query is raw SQL, so it bypasses Drizzle's column mapping and Postgres
+hands the timestamps back as text — while `JobRow` declares them `Date`. The
+mapping now happens in the repository. A field typed `Date` that is really a
+string is the kind of lie that surfaces three files away, in a `getTime()` that
+returns `NaN`.
