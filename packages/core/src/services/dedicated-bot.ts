@@ -48,7 +48,7 @@ export async function attachDedicatedBot(
 
   const tenant = await tenants.byId(input.tenantId);
   if (!tenant) throw new NotFoundError('tenant');
-  assertFeature(tenant.plan as Plan, 'dedicated_bot');
+  assertFeature(tenant.plan, 'dedicated_bot');
 
   const token = input.token.trim();
   if (!looksLikeBotToken(token)) throw new NotFoundError('bot token');

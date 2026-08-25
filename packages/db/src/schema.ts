@@ -3,6 +3,7 @@
  * lives in `migrations/` as plain SQL, because two constraints the product
  * depends on (`EXCLUDE USING gist ... WHERE`) cannot be expressed here.
  */
+import type { AppointmentStatus, Currency, Plan, TenantKind } from '@alnotica/shared';
 import { sql } from 'drizzle-orm';
 import {
   bigint,
@@ -55,12 +56,12 @@ export const tenant = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     slug: text('slug').notNull().unique(),
     title: text('title').notNull(),
-    kind: text('kind').notNull(),
+    kind: text('kind').notNull().$type<TenantKind>(),
     /** IANA zone. All scheduling arithmetic happens in it. */
     timezone: text('timezone').notNull().default('Europe/Moscow'),
     address: text('address'),
     phone: text('phone'),
-    plan: text('plan').notNull().default('free').$type<'free' | 'pro' | 'team'>(),
+    plan: text('plan').notNull().default('free').$type<Plan>(),
     botId: uuid('bot_id')
       .notNull()
       .references(() => bot.id),
@@ -117,7 +118,7 @@ export const service = pgTable(
     bufferAfterMin: integer('buffer_after_min').notNull().default(0),
     /** Integer minor units. Never a float. */
     priceMinor: integer('price_minor'),
-    currency: text('currency').notNull().default('RUB'),
+    currency: text('currency').notNull().default('RUB').$type<Currency>(),
     sortOrder: integer('sort_order').notNull().default(0),
     isActive: boolean('is_active').notNull().default(true),
     createdAt: tz('created_at').notNull().defaultNow(),
@@ -222,7 +223,11 @@ export const appointment = pgTable(
     startsAt: tz('starts_at').notNull(),
     /** Materialized: startsAt + durationMin + bufferAfterMin. */
     endsAt: tz('ends_at').notNull(),
-    status: text('status').notNull().default('confirmed'),
+    /**
+     * The column is `text` with a CHECK constraint listing exactly these values,
+     * so the narrowing is enforced by the database rather than asserted here.
+     */
+    status: text('status').notNull().default('confirmed').$type<AppointmentStatus>(),
     priceMinor: integer('price_minor'),
     comment: text('comment'),
     /** Set when the client taps "I'll be there" — an extra signal against no-show. */

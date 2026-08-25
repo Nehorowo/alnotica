@@ -6,12 +6,7 @@
  * in the request is resolved through the tenant-scoped repository: an id that
  * belongs to a different tenant simply is not found, and the answer is 404.
  */
-import {
-  createBooking,
-  getAvailability,
-  isClientReachable,
-  nearbyAlternatives,
-} from '@alnotica/core';
+import { createBooking, getAvailability, nearbyAlternatives } from '@alnotica/core';
 import type {
   AppointmentRow,
   ClientRow,
@@ -24,16 +19,15 @@ import {
   type AppointmentDto,
   type AvailabilityResponse,
   type BookResponse,
-  type Currency,
   IDEMPOTENCY_HEADER,
   InitDataError,
+  PRIORITY,
   type ScheduleResponse,
   type ServiceDto,
   type SlotDto,
   SlotTakenError,
   availabilityQuerySchema,
   bookRequestSchema,
-  formatMoney,
   isDomainError,
   scheduleQuerySchema,
   staffBookRequestSchema,
@@ -48,6 +42,12 @@ import { idempotentBooking } from '../lib/idempotency.js';
 import type { App } from '../lib/server.js';
 
 const slugParams = z.object({ slug: z.string().min(2).max(32) });
+
+/** First value of a header that may arrive repeated. */
+function headerValue(request: FastifyRequest, name: string): string | undefined {
+  const raw = request.headers[name];
+  return Array.isArray(raw) ? raw[0] : raw;
+}
 
 function serviceDto(row: ServiceRow): ServiceDto {
   return {
@@ -133,6 +133,8 @@ export function registerMiniAppRoutes(app: App, ctx: AppContext): void {
         },
         service: serviceDto(service),
         staff: { id: staff.id, name: staff.name },
+        // `Slot` and `SlotDto` are the same shape either side of the schema; the
+        // cast is nominal, and the response schema validates it on the way out.
         days: days.map((d) => ({ date: d.date, slots: d.slots as SlotDto[] })),
       };
       return reply.send(body);
@@ -193,8 +195,7 @@ export function registerMiniAppRoutes(app: App, ctx: AppContext): void {
         username: identity.user.username ?? null,
       });
 
-      const rawKey = request.headers[IDEMPOTENCY_HEADER];
-      const idempotencyKey = Array.isArray(rawKey) ? rawKey[0] : rawKey;
+      const idempotencyKey = headerValue(request, IDEMPOTENCY_HEADER);
 
       const result = await idempotentBooking(ctx, {
         tenantId: identity.tenant.id,
@@ -221,12 +222,7 @@ export function registerMiniAppRoutes(app: App, ctx: AppContext): void {
             staff,
             client,
           });
-          await notifyNewBooking(ctx, identity.tenant, appointment, {
-            service,
-            staff,
-            client,
-            reachable: isClientReachable(client),
-          });
+          await notifyNewBooking(ctx, appointment.id);
           return { appointment: dto, replayed: false } satisfies BookResponse;
         },
       });
@@ -404,52 +400,22 @@ async function alternativesFor(
     { db: ctx.db, queue: ctx.queue },
     { tenant: identity.tenant, service, staff, aroundMs: request.startsAtMs },
   );
+  // The same nominal cast: identical shape, different declaration site.
   return days.flatMap((d) => d.slots as SlotDto[]).slice(0, 8);
 }
 
-/** Tells the master about a new booking straight away. */
-async function notifyNewBooking(
-  ctx: AppContext,
-  tenant: TenantRow,
-  appointment: AppointmentRow,
-  parts: { service: ServiceRow; staff: StaffRow; client: ClientRow; reachable: boolean },
-): Promise<void> {
-  if (parts.staff.telegramId === null) return;
-  const local = DateTime.fromJSDate(appointment.startsAt, { zone: tenant.timezone });
-  const price = appointment.priceMinor
-    ? ` · ${formatMoney(appointment.priceMinor, parts.service.currency as Currency)}`
-    : '';
-  // The text itself is assembled in the worker, which owns all message templates;
-  // here we only hand it the facts it needs.
+/**
+ * Asks the worker to tell the master. Facts only: every message template lives
+ * in the worker's `texts.ts`, and a second copy of the wording here would be one
+ * nobody remembers to update.
+ */
+async function notifyNewBooking(ctx: AppContext, appointmentId: string): Promise<void> {
   await ctx.queue.enqueue({
-    kind: 'send_message',
-    payload: {
-      kind: 'send_message',
-      botId: tenant.botId,
-      chatId: parts.staff.telegramId.toString(),
-      text: [
-        '<b>Новая запись</b>',
-        `${escapeHtml(parts.client.name)} · ${escapeHtml(parts.service.name)}${price}`,
-        `${local.toFormat('dd.MM')} в ${local.toFormat('HH:mm')}`,
-        parts.reachable ? '' : 'Клиент без Telegram — напоминания не придут.',
-      ]
-        .filter(Boolean)
-        .join('\n'),
-      disablePreview: true,
-      marketing: false,
-      tenantId: tenant.id,
-    },
-    priority: 10,
-    dedupeKey: `new_booking:${appointment.id}`,
+    kind: 'notify_booking',
+    payload: { kind: 'notify_booking', appointmentId, event: 'created' },
+    priority: PRIORITY.transactional,
+    dedupeKey: `notify_booking:created:${appointmentId}`,
   });
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
 }
 
 function handle(

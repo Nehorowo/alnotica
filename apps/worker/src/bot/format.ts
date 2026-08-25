@@ -45,8 +45,8 @@ export function formatTime(date: Date, timezone: string): string {
   return inZone(date, timezone).toFormat('HH:mm');
 }
 
-export function formatPrice(priceMinor: number | null, currency: string): string | null {
-  return priceMinor === null ? null : formatMoney(priceMinor, currency as Currency);
+export function formatPrice(priceMinor: number | null, currency: Currency): string | null {
+  return priceMinor === null ? null : formatMoney(priceMinor, currency);
 }
 
 export interface AppointmentParts {

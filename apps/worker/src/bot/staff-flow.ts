@@ -9,6 +9,7 @@
 import { cancelBooking, recordOutcome } from '@alnotica/core';
 import type { AppointmentRow, ServiceRow, StaffRow, TenantRow } from '@alnotica/db';
 import {
+  type CallbackData,
   type Currency,
   type Plan,
   TENANT_KINDS,
@@ -28,8 +29,9 @@ import {
   monthlyQuota,
   parseLocalTime,
   startLink,
+  tenantKindSchema,
 } from '@alnotica/shared';
-import type { Composer } from 'grammy';
+import type { Composer, NextFunction } from 'grammy';
 import { DateTime } from 'luxon';
 import { type BotContext, displayName, senderId } from './context.js';
 import { formatDayHeading, formatTime, formatWhen, staffAppointmentCard } from './format.js';
@@ -187,7 +189,9 @@ async function finishRegistration(ctx: BotContext): Promise<void> {
   const tenant = await ctx.tenants.create({
     slug,
     title: draft.title,
-    kind: draft.kind,
+    // The draft lives in a session row, so its `kind` is data from outside this
+    // process: parse it rather than trusting the string.
+    kind: tenantKindSchema.parse(draft.kind),
     timezone: draft.timezone,
     botId: ctx.deps.botRow.id,
   });
@@ -251,7 +255,7 @@ export async function showCabinet(ctx: BotContext, tenant: TenantRow): Promise<v
   const repo = ctx.tenantRepo(tenant.id);
   const { startMs, endMs } = monthBounds(ctx.now(), tenant.timezone);
   const used = await repo.appointments.countCreatedBetween(startMs, endMs);
-  const quota = monthlyQuota(tenant.plan as Plan, used);
+  const quota = monthlyQuota(tenant.plan, used);
 
   const quotaLine =
     quota.limit === null ? '' : `Записей в этом месяце: ${quota.used} из ${quota.limit}`;
@@ -409,15 +413,13 @@ async function showServices(ctx: BotContext, tenant: TenantRow, page = 0): Promi
   const all = await repo.services.list(true);
   const slice = all.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
-  const rows: Keyboard = slice.map((s) => [
-    button(
-      `${s.isActive ? '' : '· '}${texts.client.serviceLine(s.name, s.durationMin, s.priceMinor, s.currency)}`.slice(
-        0,
-        60,
-      ),
-      { a: 'svc_edit', id: s.id, f: 'toggle' },
-    ),
-  ]);
+  const rows: Keyboard = slice.map((s) => {
+    // A button label is plain text, not HTML, so the service name goes in raw —
+    // escaping it here would show a master "Стрижка &lt;люкс&gt;" on the button.
+    const label = texts.client.serviceLine(s.name, s.durationMin, s.priceMinor, s.currency);
+    const prefix = s.isActive ? '' : '· ';
+    return [button((prefix + label).slice(0, 60), { a: 'svc_edit', id: s.id, f: 'toggle' })];
+  });
   const pagination = paginationRow('svcs', page, (page + 1) * PAGE_SIZE < all.length);
   if (pagination.length > 0) rows.push(pagination);
   rows.push([button(texts.staff.addService, { a: 'set', k: 'svc_new' })]);
@@ -518,7 +520,7 @@ function statusLabel(appointment: AppointmentRow): string {
 
 async function showSettings(ctx: BotContext, tenant: TenantRow): Promise<void> {
   const link = startLink(ctx.deps.botRow.username, { kind: 'master', slug: tenant.slug });
-  const plan = tenant.plan as Plan;
+  const plan = tenant.plan;
 
   const rows: Keyboard = [
     [
@@ -564,6 +566,164 @@ function formatOffset(minutes: number): string {
 }
 
 /* --------------------------------- wiring --------------------------------- */
+
+/**
+ * The button-driven steps of registration, which run before the master has a
+ * tenant at all. Returns true when the tap belonged to the wizard.
+ */
+async function handleRegistrationStep(ctx: BotContext, data: CallbackData): Promise<boolean> {
+  if (data.a === 'set' && data.k === 'register') {
+    await ctx.answerCallbackQuery();
+    await beginRegistration(ctx);
+    return true;
+  }
+
+  const draft = ctx.session.registration;
+  if (!draft) return false;
+
+  if (data.a === 'set' && data.k === 'kind') {
+    ctx.session.registration = { ...draft, kind: data.v ?? 'other', step: 'timezone' };
+    await ctx.answerCallbackQuery();
+    await askTimezone(ctx);
+    return true;
+  }
+
+  if (data.a === 'set' && data.k === 'tz') {
+    // The button carries a truncated zone name; match it back to the full one.
+    const zone = COMMON_TIMEZONES.find((tz) => tz.startsWith(data.v ?? '')) ?? 'Europe/Moscow';
+    ctx.session.registration = { ...draft, timezone: zone, step: 'service' };
+    await ctx.answerCallbackQuery();
+    await askFirstService(ctx);
+    return true;
+  }
+
+  if (data.a === 'wh') {
+    const weekdays = new Set(draft.weekdays ?? [1, 2, 3, 4, 5]);
+    if (weekdays.has(data.w)) weekdays.delete(data.w);
+    else weekdays.add(data.w);
+    ctx.session.registration = { ...draft, weekdays: [...weekdays].sort() };
+    await ctx.answerCallbackQuery();
+    await askSchedule(ctx);
+    return true;
+  }
+
+  if (data.a === 'set' && data.k === 'sched_done') {
+    ctx.session.awaiting = { kind: 'reg_hours' };
+    await ctx.answerCallbackQuery();
+    await renderMenu(ctx, { text: texts.staff.askScheduleHours(texts.staff.scheduleHeader) });
+    return true;
+  }
+
+  return false;
+}
+
+/** The eight cabinet destinations, split out so the dispatcher stays flat. */
+async function showCabinetSection(
+  ctx: BotContext,
+  tenant: TenantRow,
+  section: string,
+  next: NextFunction,
+): Promise<void> {
+  switch (section) {
+    case 'cabinet':
+      return showCabinet(ctx, tenant);
+    case 'today':
+      return showToday(ctx, tenant);
+    case 'svcs':
+      return showServices(ctx, tenant);
+    case 'clients':
+      return showClients(ctx, tenant);
+    case 'stats':
+      return showStats(ctx, tenant);
+    case 'set':
+      return showSettings(ctx, tenant);
+    default:
+      return next();
+  }
+}
+
+/** What a master may do to an appointment on their own calendar. */
+async function handleStaffAppointmentAction(
+  ctx: BotContext,
+  tenant: TenantRow,
+  action: 'show' | 'cancel' | 'resched' | 'confirm' | 'noshow' | 'came',
+  appointmentId: string,
+  next: NextFunction,
+): Promise<void> {
+  const deps = { db: ctx.deps.db, queue: ctx.deps.queue, nowMs: ctx.now() };
+
+  switch (action) {
+    case 'show':
+      await ctx.answerCallbackQuery();
+      return showStaffAppointment(ctx, tenant, appointmentId);
+
+    case 'came':
+    case 'noshow': {
+      // The verdict that feeds the product's headline metric.
+      await recordOutcome(deps, {
+        tenant,
+        appointmentId,
+        outcome: action === 'came' ? 'completed' : 'no_show',
+      });
+      await ctx.answerCallbackQuery({ text: texts.common.done });
+      return showStaffAppointment(ctx, tenant, appointmentId);
+    }
+
+    case 'cancel': {
+      // A master's cancellation is never bound by the client's cancel window.
+      await cancelBooking(deps, { tenant, appointmentId, by: 'staff' });
+      await ctx.answerCallbackQuery({ text: texts.client.cancelled });
+      return showToday(ctx, tenant);
+    }
+
+    default:
+      return next();
+  }
+}
+
+/** Settings toggles. Each one re-reads the tenant so the screen shows the truth. */
+async function handleSetting(
+  ctx: BotContext,
+  tenant: TenantRow,
+  key: string,
+  value: string | undefined,
+  next: NextFunction,
+): Promise<void> {
+  async function redrawSettings(): Promise<void> {
+    const updated = await ctx.tenants.byId(tenant.id);
+    if (updated) await showSettings(ctx, updated);
+  }
+
+  switch (key) {
+    case 'autoconf':
+      await ctx.tenants.update(tenant.id, { autoConfirm: !tenant.autoConfirm });
+      await ctx.answerCallbackQuery();
+      return redrawSettings();
+
+    case 'cancelwin': {
+      // Cycles 2 -> 4 -> 8 -> 16 -> 2 hours, which covers every sensible choice
+      // without a keyboard of its own.
+      const hours = tenant.cancelWindowHours >= 24 ? 2 : tenant.cancelWindowHours * 2;
+      await ctx.tenants.update(tenant.id, { cancelWindowHours: hours });
+      await ctx.answerCallbackQuery();
+      return redrawSettings();
+    }
+
+    case 'upgrade':
+      await requestUpgrade(ctx, tenant);
+      await ctx.answerCallbackQuery({ text: texts.plans.requestSent, show_alert: true });
+      return;
+
+    case 'cli_note':
+      ctx.session.awaiting = { kind: 'client_note', context: value ?? '' };
+      await ctx.answerCallbackQuery();
+      await ctx.reply(texts.staff.clientNote);
+      return;
+
+    default:
+      return next();
+  }
+}
 
 export function registerStaffFlow(composer: Composer<BotContext>): void {
   composer.command('start', async (ctx, next) => {
@@ -665,67 +825,17 @@ export function registerStaffFlow(composer: Composer<BotContext>): void {
     const data = decodeCallback(ctx.callbackQuery.data);
     if (!data) return next();
 
-    if (data.a === 'set' && data.k === 'register') {
-      await ctx.answerCallbackQuery();
-      return beginRegistration(ctx);
-    }
-
-    // Registration steps that arrive as buttons.
-    if (data.a === 'set' && data.k === 'kind' && ctx.session.registration) {
-      ctx.session.registration = {
-        ...ctx.session.registration,
-        kind: data.v ?? 'other',
-        step: 'timezone',
-      };
-      await ctx.answerCallbackQuery();
-      return askTimezone(ctx);
-    }
-    if (data.a === 'set' && data.k === 'tz' && ctx.session.registration) {
-      const zone =
-        COMMON_TIMEZONES.find((tz) => tz.startsWith(data.v ?? '')) ?? data.v ?? 'Europe/Moscow';
-      ctx.session.registration = { ...ctx.session.registration, timezone: zone, step: 'service' };
-      await ctx.answerCallbackQuery();
-      return askFirstService(ctx);
-    }
-    if (data.a === 'wh' && ctx.session.registration) {
-      const current = new Set(ctx.session.registration.weekdays ?? [1, 2, 3, 4, 5]);
-      if (current.has(data.w)) current.delete(data.w);
-      else current.add(data.w);
-      ctx.session.registration = { ...ctx.session.registration, weekdays: [...current].sort() };
-      await ctx.answerCallbackQuery();
-      return askSchedule(ctx);
-    }
-    if (data.a === 'set' && data.k === 'sched_done' && ctx.session.registration) {
-      ctx.session.awaiting = { kind: 'reg_hours' };
-      await ctx.answerCallbackQuery();
-      await renderMenu(ctx, { text: texts.staff.askScheduleHours(texts.staff.scheduleHeader) });
-      return;
-    }
+    // Registration happens before a tenant exists, so it is checked first.
+    if (await handleRegistrationStep(ctx, data)) return;
 
     const membership = await currentStaff(ctx);
     if (!membership) return next();
     const { tenant } = membership;
 
     switch (data.a) {
-      case 'menu': {
+      case 'menu':
         await ctx.answerCallbackQuery();
-        switch (data.v) {
-          case 'cabinet':
-            return showCabinet(ctx, tenant);
-          case 'today':
-            return showToday(ctx, tenant);
-          case 'svcs':
-            return showServices(ctx, tenant);
-          case 'clients':
-            return showClients(ctx, tenant);
-          case 'stats':
-            return showStats(ctx, tenant);
-          case 'set':
-            return showSettings(ctx, tenant);
-          default:
-            return next();
-        }
-      }
+        return showCabinetSection(ctx, tenant, data.v, next);
 
       case 'day_nav':
         await ctx.answerCallbackQuery();
@@ -741,67 +851,11 @@ export function registerStaffFlow(composer: Composer<BotContext>): void {
         await ctx.answerCallbackQuery();
         return showClientCard(ctx, tenant, data.id);
 
-      case 'appt': {
-        switch (data.o) {
-          case 'show':
-            await ctx.answerCallbackQuery();
-            return showStaffAppointment(ctx, tenant, data.id);
-          case 'came':
-          case 'noshow': {
-            await recordOutcome(
-              { db: ctx.deps.db, queue: ctx.deps.queue, nowMs: ctx.now() },
-              {
-                tenant,
-                appointmentId: data.id,
-                outcome: data.o === 'came' ? 'completed' : 'no_show',
-              },
-            );
-            await ctx.answerCallbackQuery({ text: texts.common.done });
-            return showStaffAppointment(ctx, tenant, data.id);
-          }
-          case 'cancel': {
-            await cancelBooking(
-              { db: ctx.deps.db, queue: ctx.deps.queue, nowMs: ctx.now() },
-              { tenant, appointmentId: data.id, by: 'staff' },
-            );
-            await ctx.answerCallbackQuery({ text: texts.client.cancelled });
-            return showToday(ctx, tenant);
-          }
-          default:
-            return next();
-        }
-      }
+      case 'appt':
+        return handleStaffAppointmentAction(ctx, tenant, data.o, data.id, next);
 
-      case 'set': {
-        switch (data.k) {
-          case 'autoconf': {
-            await ctx.tenants.update(tenant.id, { autoConfirm: !tenant.autoConfirm });
-            await ctx.answerCallbackQuery();
-            const updated = await ctx.tenants.byId(tenant.id);
-            return updated ? showSettings(ctx, updated) : undefined;
-          }
-          case 'cancelwin': {
-            const next2 = tenant.cancelWindowHours >= 24 ? 2 : tenant.cancelWindowHours * 2;
-            await ctx.tenants.update(tenant.id, { cancelWindowHours: next2 });
-            await ctx.answerCallbackQuery();
-            const updated = await ctx.tenants.byId(tenant.id);
-            return updated ? showSettings(ctx, updated) : undefined;
-          }
-          case 'upgrade': {
-            await requestUpgrade(ctx, tenant);
-            await ctx.answerCallbackQuery({ text: texts.plans.requestSent, show_alert: true });
-            return;
-          }
-          case 'cli_note': {
-            ctx.session.awaiting = { kind: 'client_note', context: data.v ?? '' };
-            await ctx.answerCallbackQuery();
-            await ctx.reply(texts.staff.clientNote);
-            return;
-          }
-          default:
-            return next();
-        }
-      }
+      case 'set':
+        return handleSetting(ctx, tenant, data.k, data.v, next);
 
       default:
         return next();

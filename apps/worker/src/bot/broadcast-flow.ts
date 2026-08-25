@@ -19,7 +19,7 @@ import {
   esc,
   html,
 } from '@alnotica/shared';
-import type { Composer } from 'grammy';
+import type { Composer, NextFunction } from 'grammy';
 import type { BotContext } from './context.js';
 import { formatWhen } from './format.js';
 import { type Keyboard, button } from './keyboards.js';
@@ -81,6 +81,27 @@ async function showAudiencePicker(ctx: BotContext, tenant: TenantRow): Promise<v
   await renderMenu(ctx, { text: texts.broadcast.title, keyboard: rows });
 }
 
+/**
+ * Opting out of marketing. Transactional reminders keep arriving: a reminder
+ * about one's own appointment is a service message, not a mailing, and stopping
+ * those is the one thing an unsubscribe here must not do.
+ */
+async function handleUnsubscribe(
+  ctx: BotContext,
+  tenantId: string,
+  next: NextFunction,
+): Promise<void> {
+  const tenant = await ctx.tenants.byId(tenantId);
+  const telegramId = ctx.from?.id;
+  if (!tenant || telegramId === undefined) return next();
+
+  const repo = ctx.tenantRepo(tenant.id);
+  const client = await repo.clients.byTelegramId(BigInt(telegramId));
+  if (client) await repo.clients.optOut(client.id);
+
+  await ctx.answerCallbackQuery({ text: texts.broadcast.unsubscribed, show_alert: true });
+}
+
 export function registerBroadcastFlow(composer: Composer<BotContext>): void {
   composer.on('message:text', async (ctx, next) => {
     if (ctx.session.awaiting?.kind !== 'broadcast_text') return next();
@@ -128,18 +149,9 @@ export function registerBroadcastFlow(composer: Composer<BotContext>): void {
     const data = decodeCallback(ctx.callbackQuery.data);
     if (!data) return next();
 
-    /* Unsubscribing is available to any client, not only to staff. */
-    if (data.a === 'unsub') {
-      const tenant = await ctx.tenants.byId(data.t);
-      if (!tenant) return next();
-      const telegramId = ctx.from?.id;
-      if (telegramId === undefined) return next();
-      const client = await ctx.tenantRepo(tenant.id).clients.byTelegramId(BigInt(telegramId));
-      if (client) await ctx.tenantRepo(tenant.id).clients.optOut(client.id);
-      // Transactional reminders keep coming: those are about their own booking.
-      await ctx.answerCallbackQuery({ text: texts.broadcast.unsubscribed, show_alert: true });
-      return;
-    }
+    // Unsubscribing belongs to the client, not to the master, so it is handled
+    // before the staff check below turns everyone else away.
+    if (data.a === 'unsub') return handleUnsubscribe(ctx, data.t, next);
 
     const membership = await currentStaff(ctx);
     if (!membership) return next();
@@ -151,18 +163,15 @@ export function registerBroadcastFlow(composer: Composer<BotContext>): void {
     }
 
     if (data.a === 'bc') {
-      switch (data.o) {
-        case 'new':
-          await ctx.answerCallbackQuery();
-          return showAudiencePicker(ctx, tenant);
-        case 'window': {
-          if (!data.id) return next();
-          await ctx.answerCallbackQuery();
-          return offerWindow(ctx, tenant, data.id);
-        }
-        default:
-          return next();
+      if (data.o === 'new') {
+        await ctx.answerCallbackQuery();
+        return showAudiencePicker(ctx, tenant);
       }
+      if (data.o === 'window' && data.id) {
+        await ctx.answerCallbackQuery();
+        return offerWindow(ctx, tenant, data.id);
+      }
+      return next();
     }
 
     if (data.a === 'set' && data.k === 'bc_aud') {

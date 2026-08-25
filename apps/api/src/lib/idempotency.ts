@@ -39,6 +39,8 @@ export async function idempotentBooking<T extends Replayable>(
     .limit(1);
 
   if (existing) {
+    // The stored body is jsonb we wrote ourselves on the first successful call,
+    // so its shape is ours; `replayed` is the only field the caller sees change.
     return { ...(existing.response as T), replayed: true };
   }
 

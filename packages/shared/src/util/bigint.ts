@@ -14,7 +14,14 @@ export function jsonStringify(value: unknown, space?: number): string {
   return JSON.stringify(value, bigintReplacer, space);
 }
 
-/** Recursively converts bigint values to strings, leaving everything else alone. */
+/**
+ * Recursively converts bigint values to strings, leaving everything else alone.
+ *
+ * The casts below are unavoidable: `JsonSafe<T>` is a recursive conditional type
+ * and TypeScript cannot see that each branch produces the matching arm of it.
+ * The `JsonSafe` definition immediately after is the actual specification, and
+ * the round-trip tests are what keep the two in agreement.
+ */
 export function toJsonSafe<T>(value: T): JsonSafe<T> {
   if (typeof value === 'bigint') return value.toString() as JsonSafe<T>;
   if (Array.isArray(value)) return value.map(toJsonSafe) as JsonSafe<T>;

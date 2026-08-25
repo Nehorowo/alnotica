@@ -51,6 +51,8 @@ export function createLogger(options: { level?: string; name?: string } = {}): L
     },
     hooks: {
       logMethod(args, method) {
+        // `sanitizeBigints` maps the tuple element-wise, which TypeScript models
+        // as `unknown[]`; the arity and order are preserved.
         method.apply(this, sanitizeBigints(args) as Parameters<typeof method>);
       },
     },

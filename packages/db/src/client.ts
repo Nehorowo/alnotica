@@ -74,6 +74,8 @@ interface PgErrorLike {
 }
 
 function asPgError(e: unknown): PgErrorLike | null {
+  // Narrowing an unknown thrown value to a bag of optional unknowns: every field
+  // is re-checked before use, so this claims no more than it knows.
   return typeof e === 'object' && e !== null ? (e as PgErrorLike) : null;
 }
 

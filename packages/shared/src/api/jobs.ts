@@ -13,6 +13,7 @@ export const JOB_KINDS = [
   'broadcast_chunk',
   'ask_no_show',
   'daily_digest',
+  'notify_booking',
 ] as const;
 export type JobKind = (typeof JOB_KINDS)[number];
 
@@ -67,6 +68,18 @@ export const reminderPayloadSchema = z.object({
   offsetMin: z.number().int().positive(),
 });
 
+/**
+ * "A booking just happened / was just cancelled — tell the master."
+ *
+ * Carries facts, not prose: the worker owns every message template, so the API
+ * never assembles user-visible text.
+ */
+export const notifyBookingPayloadSchema = z.object({
+  kind: z.literal('notify_booking'),
+  appointmentId: uuidSchema,
+  event: z.enum(['created', 'cancelled']),
+});
+
 export const askNoShowPayloadSchema = z.object({
   kind: z.literal('ask_no_show'),
   appointmentId: uuidSchema,
@@ -93,6 +106,7 @@ export const jobPayloadSchema = z.discriminatedUnion('kind', [
   askNoShowPayloadSchema,
   dailyDigestPayloadSchema,
   broadcastChunkPayloadSchema,
+  notifyBookingPayloadSchema,
 ]);
 
 export type JobPayload = z.infer<typeof jobPayloadSchema>;
@@ -102,6 +116,7 @@ export type BroadcastChunkPayload = z.infer<typeof broadcastChunkPayloadSchema>;
 export type DailyDigestPayload = z.infer<typeof dailyDigestPayloadSchema>;
 export type AskNoShowPayload = z.infer<typeof askNoShowPayloadSchema>;
 export type ProcessUpdatePayload = z.infer<typeof processUpdatePayloadSchema>;
+export type NotifyBookingPayload = z.infer<typeof notifyBookingPayloadSchema>;
 
 export const MAX_ATTEMPTS = 5;
 /** Exponential backoff of 2^attempts minutes, capped at six hours. */

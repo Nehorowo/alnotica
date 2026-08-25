@@ -13,6 +13,7 @@ import { handleAskNoShow } from './jobs/ask-no-show.js';
 import { handleBroadcastChunk } from './jobs/broadcast.js';
 import { type JobContext, JobRetryLater, JobSkipped } from './jobs/context.js';
 import { handleDailyDigest } from './jobs/daily-digest.js';
+import { handleNotifyBooking } from './jobs/notify-booking.js';
 import { handleProcessUpdate } from './jobs/process-update.js';
 import { handleReminder } from './jobs/reminder.js';
 import { handleSendMessage } from './jobs/send-message.js';
@@ -31,6 +32,8 @@ export async function runJob(ctx: JobContext, payload: JobPayload): Promise<void
       return handleDailyDigest(ctx, payload);
     case 'broadcast_chunk':
       return handleBroadcastChunk(ctx, payload);
+    case 'notify_booking':
+      return handleNotifyBooking(ctx, payload);
     default:
       return assertNever(payload, 'job payload');
   }

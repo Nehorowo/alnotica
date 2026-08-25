@@ -106,7 +106,7 @@ export async function createBooking(
     // Free-tier meter and the anti-prank cap apply to clients, not to the master.
     const { startMs, endMs } = monthBounds(nowMs, input.tenant.timezone);
     const used = await repo.appointments.countCreatedBetween(startMs, endMs);
-    assertCanCreateAppointment(input.tenant.plan as Plan, used);
+    assertCanCreateAppointment(input.tenant.plan, used);
 
     const active = await repo.appointments.activeFutureCountForClient(input.client.id, nowMs);
     assertClientAppointmentCap(active);

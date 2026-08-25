@@ -64,6 +64,8 @@ export function toWorkingIntervals(
   return rows
     .filter((r) => r.weekday >= 0 && r.weekday <= 6)
     .map((r) => ({
+      // The filter above has already established 0..6; the cast only tells the
+      // compiler what the predicate proved.
       weekday: r.weekday as Weekday,
       startsLocal: r.startsLocal,
       endsLocal: r.endsLocal,
@@ -107,6 +109,8 @@ export async function loadSlotQuery(
     rules: rulesFor(req.tenant),
     service: { durationMin: req.service.durationMin, bufferAfterMin: req.service.bufferAfterMin },
     workingHours: toWorkingIntervals(hours),
+    // `BusySpan` and `BusyInterval` are the same shape either side of the
+    // package boundary; the cast is nominal, not a reinterpretation.
     busy: busy as BusyInterval[],
     nowMs,
   };

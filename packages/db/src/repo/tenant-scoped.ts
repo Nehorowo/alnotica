@@ -6,7 +6,7 @@
  * return nothing rather than someone else's data, and the API turns "nothing"
  * into a 404 — never a 403, which would confirm the row exists.
  */
-import { type StatsRow, appointmentStatusSchema } from '@alnotica/shared';
+import { type AppointmentStatus, type StatsRow, appointmentStatusSchema } from '@alnotica/shared';
 import {
   and,
   asc,
@@ -47,7 +47,7 @@ import {
 } from '../schema.js';
 
 /** Statuses that reserve time. Mirrors BLOCKING_STATUSES and the EXCLUDE clause. */
-const BLOCKING = ['pending', 'confirmed'] as const;
+const BLOCKING = ['pending', 'confirmed'] as const satisfies readonly AppointmentStatus[];
 
 export class SlotAlreadyTakenError extends Error {
   readonly code = 'slot_taken';
@@ -64,7 +64,7 @@ export interface CreateAppointmentRow {
   readonly ref: string;
   readonly startsAt: Date;
   readonly endsAt: Date;
-  readonly status: string;
+  readonly status: AppointmentStatus;
   readonly priceMinor?: number | null;
   readonly comment?: string | null;
   readonly createdBy: 'client' | 'staff';
@@ -507,8 +507,8 @@ export function forTenant(db: Database, tenantId: string) {
      */
     async transition(
       id: string,
-      from: readonly string[],
-      to: string,
+      from: readonly AppointmentStatus[],
+      to: AppointmentStatus,
       patch: Partial<AppointmentRow> = {},
     ): Promise<AppointmentRow | null> {
       const { tenantId: _t, id: _i, ...safe } = patch;

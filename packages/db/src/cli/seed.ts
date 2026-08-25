@@ -85,7 +85,7 @@ try {
   const tenant = await tenants.create({
     slug: SLUG,
     title: 'Груминг у Ани',
-    kind: 'grooming',
+    kind: 'grooming' as const,
     timezone: TIMEZONE,
     botId: bot.id,
     address: 'Москва, ул. Примерная, 1',

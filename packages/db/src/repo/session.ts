@@ -18,6 +18,8 @@ export function pgSessionStorage<T>(db: Database): StorageAdapter<T> {
   return {
     async read(key: string): Promise<T | undefined> {
       const [row] = await db.select().from(session).where(eq(session.key, key)).limit(1);
+      // jsonb round-tripped through our own writer; grammY's session middleware
+      // owns the shape and re-initialises anything it cannot use.
       return row ? (row.data as T) : undefined;
     },
 

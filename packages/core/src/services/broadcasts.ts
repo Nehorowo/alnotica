@@ -22,6 +22,7 @@ import {
   WINDOW_OPENED_INACTIVE_DAYS,
   assertBroadcastAllowed,
   assertFeature,
+  audienceFilterSchema,
   broadcastCancelKey,
   chunk,
   chunkDelayMs,
@@ -97,7 +98,7 @@ export async function createBroadcast(
   const repo = forTenant(deps.db, input.tenant.id);
 
   // Broadcasting is a paid feature before it is anything else.
-  assertFeature(input.tenant.plan as Plan, 'broadcasts');
+  assertFeature(input.tenant.plan, 'broadcasts');
 
   const audience = await resolveAudience(deps, input.tenant, input.audience);
   const { startMs } = monthBounds(nowMs, input.tenant.timezone);
@@ -141,7 +142,12 @@ export async function startBroadcast(
   const broadcast = await repo.broadcasts.byId(broadcastId);
   if (!broadcast) throw new NotFoundError('broadcast');
 
-  const audience = await resolveAudience(deps, tenant, broadcast.audience as AudienceFilter);
+  // The audience is jsonb: data from the database is parsed, never cast.
+  const audience = await resolveAudience(
+    deps,
+    tenant,
+    audienceFilterSchema.parse(broadcast.audience),
+  );
   if (audience.length === 0) throw new BroadcastLimitError('empty_audience');
 
   await repo.broadcasts.update(broadcastId, {

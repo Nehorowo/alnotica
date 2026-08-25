@@ -15,7 +15,9 @@ import {
 } from '@alnotica/core';
 import type { ClientRow, ServiceRow, StaffRow, TenantRow } from '@alnotica/db';
 import {
+  type CallbackData,
   OutsideCancelWindowError,
+  PRIORITY,
   type Slot,
   SlotTakenError,
   decodeCallback,
@@ -26,7 +28,7 @@ import {
   parseStartPayload,
   startLink,
 } from '@alnotica/shared';
-import type { Composer } from 'grammy';
+import type { Composer, NextFunction } from 'grammy';
 import { DateTime } from 'luxon';
 import { type BotContext, chatId, displayName, senderId } from './context.js';
 import { clientAppointmentCard, formatDayHeading, formatPrice, formatWhen } from './format.js';
@@ -301,7 +303,7 @@ async function book(ctx: BotContext, startsAtMs: number): Promise<void> {
       ],
     });
 
-    await notifyStaffOfBooking(ctx, tenant, staff, client, service, appointment.startsAt);
+    await notifyStaff(ctx, appointment.id, 'created');
   } catch (error) {
     if (error instanceof SlotTakenError) {
       // Not a 500 and not a dead end: show what is still free right now.
@@ -313,35 +315,21 @@ async function book(ctx: BotContext, startsAtMs: number): Promise<void> {
   }
 }
 
-async function notifyStaffOfBooking(
+/**
+ * Hands the notification to the queue rather than sending it inline: an update
+ * handler must finish quickly, and `notify_booking` already knows how to render
+ * both the new-booking and the cancellation message.
+ */
+async function notifyStaff(
   ctx: BotContext,
-  tenant: TenantRow,
-  staff: StaffRow,
-  client: ClientRow,
-  service: ServiceRow,
-  startsAt: Date,
+  appointmentId: string,
+  event: 'created' | 'cancelled',
 ): Promise<void> {
-  const price = formatPrice(service.priceMinor, service.currency);
   await ctx.deps.queue.enqueue({
-    kind: 'send_message',
-    payload: {
-      kind: 'send_message',
-      botId: tenant.botId,
-      chatId: staff.telegramId.toString(),
-      text: [
-        html`<b>${texts.staff.newBooking}</b>`.value,
-        html`${client.name} · ${service.name}${price ? ` · ${price}` : ''}`.value,
-        html`${formatWhen(startsAt, tenant.timezone)}`.value,
-        isClientReachable(client) ? '' : esc(texts.staff.manualNoReminders),
-      ]
-        .filter(Boolean)
-        .join('\n'),
-      disablePreview: true,
-      marketing: false,
-      tenantId: tenant.id,
-      clientId: client.id,
-    },
-    priority: 10,
+    kind: 'notify_booking',
+    payload: { kind: 'notify_booking', appointmentId, event },
+    priority: PRIORITY.transactional,
+    dedupeKey: `notify_booking:${event}:${appointmentId}`,
   });
 }
 
@@ -455,7 +443,7 @@ async function doCancel(ctx: BotContext, tenant: TenantRow, appointmentId: strin
       { tenant, appointmentId, by: 'client' },
     );
     await ctx.answerCallbackQuery({ text: texts.client.cancelled });
-    await notifyStaffOfCancellation(ctx, tenant, appointment.id);
+    await notifyStaff(ctx, appointment.id, 'cancelled');
     await showMyAppointments(ctx, tenant);
   } catch (error) {
     if (error instanceof OutsideCancelWindowError) {
@@ -512,6 +500,166 @@ async function notifyStaffOfCancellation(
   });
 }
 
+/** The personal-data notice, which gates everything else. */
+async function handleConsent(
+  ctx: BotContext,
+  tenant: TenantRow,
+  answer: 'accept' | 'decline',
+): Promise<void> {
+  const client = await ensureClient(ctx, tenant);
+  if (!client) return;
+
+  if (answer === 'decline') {
+    await ctx.answerCallbackQuery();
+    // Nothing beyond the telegramId has been stored, and nothing more will be.
+    await renderMenu(ctx, { text: texts.consent.declined });
+    return;
+  }
+
+  await ctx.tenantRepo(tenant.id).clients.recordConsent(client.id);
+  await ctx.answerCallbackQuery();
+  await showClientHome(ctx, tenant);
+}
+
+/** Service, master, page, slot — the four taps that make up a booking. */
+async function handleBookingStep(
+  ctx: BotContext,
+  tenant: TenantRow,
+  data: Extract<CallbackData, { a: 'svc' | 'staff' | 'more' | 'slot' }>,
+  next: NextFunction,
+): Promise<void> {
+  const repo = ctx.tenantRepo(tenant.id);
+  const draft = ctx.session.booking;
+
+  switch (data.a) {
+    case 'svc': {
+      const service = await repo.services.byId(data.id);
+      if (!service) {
+        await ctx.answerCallbackQuery({ text: texts.errors.notFound, show_alert: true });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      return showStaffPicker(ctx, tenant, service);
+    }
+
+    case 'staff': {
+      if (!draft?.serviceId) return next();
+      const service = await repo.services.byId(draft.serviceId);
+      if (!service) return next();
+      // "Any master" resolves to whoever performs the service first.
+      const staff =
+        data.id === 'any'
+          ? (await repo.services.staffFor(service.id))[0]
+          : await repo.staff.byId(data.id);
+      if (!staff) {
+        await ctx.answerCallbackQuery({ text: texts.errors.notFound, show_alert: true });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      return showSlots(ctx, tenant, service, staff, 0);
+    }
+
+    case 'more': {
+      if (!draft?.serviceId || !draft.staffId) return next();
+      const [service, staff] = await Promise.all([
+        repo.services.byId(draft.serviceId),
+        repo.staff.byId(draft.staffId),
+      ]);
+      if (!service || !staff) return next();
+      await ctx.answerCallbackQuery();
+      return showSlots(ctx, tenant, service, staff, data.p);
+    }
+
+    case 'slot':
+      await ctx.answerCallbackQuery();
+      return book(ctx, data.t);
+  }
+}
+
+/** The four client menu destinations, split out so the dispatcher stays flat. */
+async function showClientSection(
+  ctx: BotContext,
+  tenant: TenantRow,
+  section: string,
+  next: NextFunction,
+): Promise<void> {
+  switch (section) {
+    case 'home':
+      return showClientHome(ctx, tenant);
+    case 'book':
+      return showServices(ctx, tenant);
+    case 'mine':
+      return showMyAppointments(ctx, tenant);
+    case 'contacts':
+      return renderMenu(ctx, {
+        text: [
+          html`<b>${tenant.title}</b>`.value,
+          tenant.address ? html`${tenant.address}`.value : '',
+          tenant.phone ? html`${tenant.phone}`.value : '',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+        keyboard: [[button(texts.common.back, { a: 'menu', v: 'home' })]],
+      });
+    default:
+      return next();
+  }
+}
+
+/** What a client may do to one of their own appointments. */
+async function handleAppointmentAction(
+  ctx: BotContext,
+  tenant: TenantRow,
+  action: 'show' | 'cancel' | 'resched' | 'confirm' | 'noshow' | 'came',
+  appointmentId: string,
+  next: NextFunction,
+): Promise<void> {
+  const repo = ctx.tenantRepo(tenant.id);
+
+  switch (action) {
+    case 'show':
+      await ctx.answerCallbackQuery();
+      return showAppointmentCard(ctx, tenant, appointmentId);
+
+    case 'cancel':
+      return doCancel(ctx, tenant, appointmentId);
+
+    case 'confirm': {
+      // "I'll be there" on a reminder: an extra signal against a no-show.
+      await confirmByClient(
+        { db: ctx.deps.db, queue: ctx.deps.queue, nowMs: ctx.now() },
+        tenant.id,
+        appointmentId,
+      );
+      await ctx.answerCallbackQuery({ text: texts.client.confirmedAttendance });
+      return;
+    }
+
+    case 'resched': {
+      const appointment = await repo.appointments.byId(appointmentId);
+      if (!appointment) return;
+      const [service, staff] = await Promise.all([
+        repo.services.byId(appointment.serviceId),
+        repo.staff.byId(appointment.staffId),
+      ]);
+      if (!service || !staff) return;
+      // Rescheduling reuses the time picker; booking the new slot releases the old.
+      ctx.session.booking = {
+        tenantId: tenant.id,
+        serviceId: service.id,
+        staffId: staff.id,
+        page: 0,
+      };
+      await ctx.answerCallbackQuery();
+      return showSlots(ctx, tenant, service, staff, 0);
+    }
+
+    default:
+      // `noshow` and `came` belong to the master's flow, not the client's.
+      return next();
+  }
+}
+
 /* -------------------------------- wiring ---------------------------------- */
 
 export function registerClientFlow(composer: Composer<BotContext>): void {
@@ -557,130 +705,23 @@ export function registerClientFlow(composer: Composer<BotContext>): void {
 
     const tenant = await loadTenantFromSession(ctx);
     if (!tenant) return next();
-    const repo = ctx.tenantRepo(tenant.id);
 
     switch (data.a) {
-      case 'consent': {
-        const client = await ensureClient(ctx, tenant);
-        if (!client) return;
-        if (data.v === 'decline') {
-          await ctx.answerCallbackQuery();
-          await renderMenu(ctx, { text: texts.consent.declined });
-          return;
-        }
-        await repo.clients.recordConsent(client.id);
+      case 'consent':
+        return handleConsent(ctx, tenant, data.v);
+
+      case 'menu':
         await ctx.answerCallbackQuery();
-        await showClientHome(ctx, tenant);
-        return;
-      }
+        return showClientSection(ctx, tenant, data.v, next);
 
-      case 'menu': {
-        await ctx.answerCallbackQuery();
-        switch (data.v) {
-          case 'home':
-            return showClientHome(ctx, tenant);
-          case 'book':
-            return showServices(ctx, tenant);
-          case 'mine':
-            return showMyAppointments(ctx, tenant);
-          case 'contacts':
-            return renderMenu(ctx, {
-              text: [
-                html`<b>${tenant.title}</b>`.value,
-                tenant.address ? html`${tenant.address}`.value : '',
-                tenant.phone ? html`${tenant.phone}`.value : '',
-              ]
-                .filter(Boolean)
-                .join('\n'),
-              keyboard: [[button(texts.common.back, { a: 'menu', v: 'home' })]],
-            });
-          default:
-            return next();
-        }
-      }
+      case 'svc':
+      case 'staff':
+      case 'more':
+      case 'slot':
+        return handleBookingStep(ctx, tenant, data, next);
 
-      case 'svc': {
-        const service = await repo.services.byId(data.id);
-        if (!service) {
-          await ctx.answerCallbackQuery({ text: texts.errors.notFound, show_alert: true });
-          return;
-        }
-        await ctx.answerCallbackQuery();
-        return showStaffPicker(ctx, tenant, service);
-      }
-
-      case 'staff': {
-        const draft = ctx.session.booking;
-        const serviceId = draft?.serviceId;
-        if (!serviceId) return next();
-        const service = await repo.services.byId(serviceId);
-        if (!service) return next();
-
-        const staff =
-          data.id === 'any'
-            ? (await repo.services.staffFor(service.id))[0]
-            : await repo.staff.byId(data.id);
-        if (!staff) {
-          await ctx.answerCallbackQuery({ text: texts.errors.notFound, show_alert: true });
-          return;
-        }
-        await ctx.answerCallbackQuery();
-        return showSlots(ctx, tenant, service, staff, 0);
-      }
-
-      case 'more': {
-        const draft = ctx.session.booking;
-        if (!draft?.serviceId || !draft.staffId) return next();
-        const [service, staff] = await Promise.all([
-          repo.services.byId(draft.serviceId),
-          repo.staff.byId(draft.staffId),
-        ]);
-        if (!service || !staff) return next();
-        await ctx.answerCallbackQuery();
-        return showSlots(ctx, tenant, service, staff, data.p);
-      }
-
-      case 'slot': {
-        await ctx.answerCallbackQuery();
-        return book(ctx, data.t);
-      }
-
-      case 'appt': {
-        switch (data.o) {
-          case 'show':
-            await ctx.answerCallbackQuery();
-            return showAppointmentCard(ctx, tenant, data.id);
-          case 'cancel':
-            return doCancel(ctx, tenant, data.id);
-          case 'confirm': {
-            await confirmByClient(
-              { db: ctx.deps.db, queue: ctx.deps.queue, nowMs: ctx.now() },
-              tenant.id,
-              data.id,
-            );
-            await ctx.answerCallbackQuery({ text: texts.client.confirmedAttendance });
-            return;
-          }
-          case 'resched': {
-            const appointment = await repo.appointments.byId(data.id);
-            if (!appointment) return;
-            const service = await repo.services.byId(appointment.serviceId);
-            const staff = await repo.staff.byId(appointment.staffId);
-            if (!service || !staff) return;
-            // Rescheduling reuses the picker; booking the new slot cancels the old.
-            ctx.session.booking = {
-              tenantId: tenant.id,
-              serviceId: service.id,
-              staffId: staff.id,
-              page: 0,
-            };
-            await ctx.answerCallbackQuery();
-            return showSlots(ctx, tenant, service, staff, 0);
-          }
-          default:
-            return next();
-        }
-      }
+      case 'appt':
+        return handleAppointmentAction(ctx, tenant, data.o, data.id, next);
 
       default:
         return next();

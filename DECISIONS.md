@@ -182,3 +182,38 @@ Sixty past appointments with roughly 8% no-shows and 10% cancellations, delivery
 records for the completed ones, two masters, a lunch break in the schedule, and
 two clients with no Telegram account. A demo where every visit completed makes
 the statistics screen — the thing the master is paying for — look like a stub.
+
+## Code quality
+
+### D25. The API composes no user-visible text
+`POST /book` used to assemble the master's "new booking" message itself, with its
+own copy of an HTML escaper. That put the wording in two places, only one of
+which anybody would think to update. The API now enqueues a `notify_booking` job
+carrying an appointment id and an event name; the worker renders it from
+`texts.ts`, which is where every string in the product lives.
+
+### D26. Escaping is enforced by a test, not by discipline
+`apps/worker/src/bot/escaping.test.ts` reads the bot's own sources and fails on
+any `${...}` that interpolates a user-controlled field (`.name`, `.title`,
+`.comment`, `.address`, …) into a template without `esc()` or the `html` tag.
+Biome cannot see which template literals become message bodies, so the brief's
+"a Biome rule or a test on the templates" is satisfied by the test. The rule
+itself is tested against a synthetic violation, so it cannot rot into a no-op.
+
+Button labels are deliberately exempt and marked as such: Telegram renders them
+as plain text, and escaping one shows the master `Стрижка &lt;люкс&gt;`.
+
+### D27. Callback dispatchers are split, not silenced
+The four bot dispatchers tripped Biome's cognitive-complexity ceiling. Rather
+than raise the threshold, each one is now a flat switch that delegates to a named
+handler per action group (`handleBookingStep`, `handleStaffAppointmentAction`,
+`handleRegistrationStep`, `handleSetting`, …). `pnpm lint` is clean with no
+suppressions.
+
+### D28. Column types are narrowed in the schema, not asserted at each use
+`tenant.plan`, `tenant.kind`, `service.currency` and `appointment.status` carry
+`$type<…>()` in the Drizzle schema, backed by the CHECK constraints in the
+migration. That removed a dozen scattered `as Plan` / `as Currency` casts. The
+handful of assertions that remain each carry a comment saying what makes them
+safe, as the brief requires; values arriving from jsonb or from a session row are
+parsed with Zod instead.

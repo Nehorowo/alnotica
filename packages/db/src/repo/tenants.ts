@@ -1,3 +1,4 @@
+import type { TenantKind } from '@alnotica/shared';
 import { and, eq, sql } from 'drizzle-orm';
 import type { Database } from '../client.js';
 import {
@@ -14,7 +15,7 @@ import {
 export interface CreateTenantInput {
   readonly slug: string;
   readonly title: string;
-  readonly kind: string;
+  readonly kind: TenantKind;
   readonly timezone: string;
   readonly botId: string;
   readonly address?: string | null;
