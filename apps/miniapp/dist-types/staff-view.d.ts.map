@@ -1,0 +1,1 @@
+{"version":3,"file":"staff-view.d.ts","sourceRoot":"","sources":["../src/staff-view.ts"],"names":[],"mappings":"AAeA,MAAM,WAAW,gBAAgB;IAC/B,QAAQ,CAAC,IAAI,EAAE,WAAW,CAAC;IAC3B,QAAQ,CAAC,IAAI,EAAE,MAAM,CAAC;CACvB;AAED,wBAAsB,eAAe,CAAC,OAAO,EAAE,gBAAgB,GAAG,OAAO,CAAC,IAAI,CAAC,CAgI9E"}

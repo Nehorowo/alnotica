@@ -6,9 +6,11 @@
  * CI sets the variable directly and this file finds nothing to do.
  */
 import { existsSync, readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 
-const envFile = fileURLToPath(new URL('./.env.test', import.meta.url));
+// `process.cwd()` rather than `import.meta.url`: under the jsdom environment the
+// module URL is an http one and cannot be converted to a path.
+const envFile = join(process.cwd(), '.env.test');
 
 if (existsSync(envFile)) {
   for (const line of readFileSync(envFile, 'utf8').split('\n')) {

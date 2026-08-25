@@ -15,7 +15,7 @@ Checklist from §16 of the brief. Updated after every stage; each stage ends wit
 - [x] `initData` with a flipped byte and with a stale `auth_date` are rejected
 - [x] Webhook without `X-Telegram-Bot-Api-Secret-Token` -> 401
 - [x] The client path works without the Mini App, buttons only
-- [ ] Mini App correct in light and dark themes at 360 px; response types shared with the server
+- [x] Mini App correct in light and dark themes at 360 px; response types shared with the server
 - [x] Tenant-isolation test passes on every route
 - [ ] Broadcast limits hold; moderation of the first three works
 - [ ] Not one byte of media on our disk: `fileId` only
@@ -35,9 +35,9 @@ Checklist from §16 of the brief. Updated after every stage; each stage ends wit
 - [x] 8. Client path with plain buttons, end to end
 - [x] 9. Reminders to client and master, extinguished on cancel, tested
 - [x] 10. `ask_no_show`, `completed`/`no_show`, statistics with no-show rate
-- [ ] 11. Mini App: `initData`, API, client calendar, `slots.ts` reused on the client
-- [ ] 12. Mini App for the master: week view, manual booking
-- [ ] 13. Clients, card, history, notes
+- [x] 11. Mini App: `initData`, API, client calendar, `slots.ts` reused on the client
+- [x] 12. Mini App for the master: week view, manual booking
+- [x] 13. Clients, card, history, notes
 - [ ] 14. Broadcasts with limits and moderation, "a window opened"
 - [ ] 15. `dedicated` bot mode, token encryption, routing by `botId`
 - [ ] 16. Admin panel, free-tier limit, backups, alerts, `DEPLOY.md`
