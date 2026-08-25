@@ -8,7 +8,7 @@ Checklist from §16 of the brief. Updated after every stage; each stage ends wit
 - [ ] `pnpm dev` brings everything up with one command, `pnpm seed` fills demo data
 - [x] `pnpm test` green; `packages/shared` coverage >= 90%; `pnpm lint` and `pnpm typecheck` clean; no `any`
 - [x] DST-day test passes; slots are neither duplicated nor lost
-- [ ] Concurrent booking of one slot on a real Postgres: one wins, the other gets `23P01` and a human message
+- [x] Concurrent booking of one slot on a real Postgres: one wins, the other gets `23P01` and a human message
 - [ ] Cancel and reschedule extinguish every reminder; a test proves it
 - [ ] A repeated `updateId` and a repeated `POST /book` create no duplicates
 - [ ] A `telegramId` beyond 2^53 loses no precision anywhere
@@ -16,7 +16,7 @@ Checklist from §16 of the brief. Updated after every stage; each stage ends wit
 - [ ] Webhook without `X-Telegram-Bot-Api-Secret-Token` -> 401
 - [ ] The client path works without the Mini App, buttons only
 - [ ] Mini App correct in light and dark themes at 360 px; response types shared with the server
-- [ ] Tenant-isolation test passes on every route
+- [ ] Tenant-isolation test passes on every route (repository layer done; HTTP routes pending)
 - [ ] Broadcast limits hold; moderation of the first three works
 - [ ] Not one byte of media on our disk: `fileId` only
 - [ ] `ops/restore.sh` really restores the database, verified
@@ -26,7 +26,7 @@ Checklist from §16 of the brief. Updated after every stage; each stage ends wit
 ## Stages (§15)
 
 - [x] 1. Monorepo, TS/Biome/Turbo config, compose, database up, `/healthz`, long polling
-- [ ] 2. `packages/db`: Drizzle schema, migrations, `btree_gist`, EXCLUDE, tenant-scoped repositories
+- [x] 2. `packages/db`: Drizzle schema, migrations, `btree_gist`, EXCLUDE, tenant-scoped repositories
 - [x] 3. `packages/shared/domain/slots.ts` and its full test set
 - [x] 4. `packages/shared/domain/booking.ts`: statuses and transitions (DB-side `23P01` handling in stage 5)
 - [ ] 5. `job` queue, worker, scheduler, `cancelKey`, typed payloads
@@ -50,3 +50,12 @@ statements (179 tests). The slot engine, the state machine, reminder planning,
 plan limits, broadcast gates, statistics, the callback codec, deep links and the
 `initData` helpers are all pure and browser-safe. Deviations are recorded in
 `DECISIONS.md` (D6-D11 concern this stage).
+
+**Stage 2.** `packages/db` is complete: Drizzle schema, one hand-written SQL
+migration with `btree_gist` and both EXCLUDE constraints, and tenant-scoped
+repositories where the tenant filter cannot be forgotten because it is bound at
+construction. 37 integration tests run against a real Postgres 16, including two
+transactions racing for the same slot (exactly one wins, the loser gets `23P01`),
+tenant isolation on reads and writes, queue claiming under `FOR UPDATE SKIP
+LOCKED`, reminder cancellation by `cancelKey`, and a Telegram id past 2^53
+surviving the round trip. Deviations D12-D13 concern this stage.

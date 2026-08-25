@@ -91,3 +91,18 @@ encoding, not in the checking.
 `auth_date` freshness, user parsing) is in `shared/telegram/init-data.ts`, and
 `apps/api` supplies the HMAC. The code-point sort — the thing the spec warns
 about — is therefore covered by the shared unit tests.
+
+### D12. Raw SQL passes timestamps as ISO strings, not `Date`
+`drizzle()` mutates the postgres.js client it is handed: it replaces the
+serializers and parsers for `timestamptz`, `timestamp`, `date` and `time` with
+identity functions so that it can control the representation itself. After that
+line a hand-written ``sql`... ${someDate} ...` `` fails deep inside the driver
+with a type error that names neither Drizzle nor the column. Every raw query in
+this codebase therefore passes `date.toISOString()` with an explicit
+`::timestamptz` cast, and `client.ts` says why.
+
+### D13. `job.dead` means "finished and still carrying an error"
+Not "attempts >= max_attempts". The worker is the only thing that gives up, and
+it does so by calling `fail(id, err, null)` — sometimes before the attempt budget
+is spent, when the error is clearly permanent. Deriving deadness from the attempt
+counter would have hidden exactly those jobs from the admin panel.
