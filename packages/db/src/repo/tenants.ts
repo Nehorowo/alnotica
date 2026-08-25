@@ -124,6 +124,8 @@ export function tenantRepo(db: Database) {
     },
 
     async update(id: string, patch: Partial<TenantRow>): Promise<TenantRow | null> {
+      // Drizzle rejects an empty SET; an empty patch is a no-op, not an error.
+      if (Object.keys(patch).length === 0) return this.byId(id);
       const [row] = await db.update(tenant).set(patch).where(eq(tenant.id, id)).returning();
       return row ?? null;
     },

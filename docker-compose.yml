@@ -1,0 +1,119 @@
+# One VDS, four services. No orchestrator, no service mesh: at 500 tenants this
+# machine is idling, and every moving part is one more thing to debug at 3am.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-alnotica}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-alnotica}
+      TZ: UTC
+    # Tuned for 64 GB of RAM. work_mem is per sort, not per connection, so it is
+    # deliberately generous with max_connections held at 100.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=8GB
+      - -c
+      - effective_cache_size=32GB
+      - -c
+      - work_mem=64MB
+      - -c
+      - maintenance_work_mem=2GB
+      - -c
+      - max_connections=100
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - log_min_duration_statement=1000
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-alnotica} -d ${POSTGRES_DB:-alnotica}']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    # Not published: only the compose network reaches it.
+    expose:
+      - '5432'
+
+  api:
+    build:
+      context: .
+      target: runtime
+    restart: unless-stopped
+    command: ['node', 'apps/api/dist/main.js']
+    env_file: [.env]
+    environment:
+      TZ: UTC
+      DATABASE_URL: postgres://${POSTGRES_USER:-alnotica}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-alnotica}
+    depends_on:
+      db:
+        condition: service_healthy
+    expose:
+      - '3000'
+
+  worker:
+    build:
+      context: .
+      target: runtime
+    restart: unless-stopped
+    command: ['node', 'apps/worker/dist/main.js']
+    env_file: [.env]
+    environment:
+      TZ: UTC
+      DATABASE_URL: postgres://${POSTGRES_USER:-alnotica}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-alnotica}
+    depends_on:
+      db:
+        condition: service_healthy
+      api:
+        condition: service_started
+    # SIGTERM stops it claiming new jobs and lets the current batch finish.
+    stop_grace_period: 30s
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    # Telegram refuses to register a webhook without valid HTTPS, and Caddy gets
+    # a certificate on its own. That is the whole reason it is here.
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN}
+      TZ: UTC
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+
+  backup:
+    build:
+      context: .
+      target: runtime
+    restart: unless-stopped
+    user: root
+    env_file: [.env]
+    environment:
+      TZ: UTC
+      DATABASE_URL: postgres://${POSTGRES_USER:-alnotica}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-alnotica}
+      BACKUP_DIR: /backups
+    volumes:
+      - ./backups:/backups
+    depends_on:
+      db:
+        condition: service_healthy
+    # Every six hours, starting immediately so a fresh deployment has one dump
+    # before anyone has a chance to need it.
+    entrypoint: ['/bin/sh', '-c']
+    command:
+      - 'while true; do bash /app/ops/backup.sh || true; sleep 21600; done'
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

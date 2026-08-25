@@ -5,7 +5,7 @@ Checklist from §16 of the brief. Updated after every stage; each stage ends wit
 
 ## Readiness criteria (§16)
 
-- [ ] `pnpm dev` brings everything up with one command, `pnpm seed` fills demo data
+- [x] `pnpm dev` brings everything up with one command, `pnpm seed` fills demo data
 - [x] `pnpm test` green; `packages/shared` coverage >= 90%; `pnpm lint` and `pnpm typecheck` clean; no `any`
 - [x] DST-day test passes; slots are neither duplicated nor lost
 - [x] Concurrent booking of one slot on a real Postgres: one wins, the other gets `23P01` and a human message
@@ -17,10 +17,10 @@ Checklist from §16 of the brief. Updated after every stage; each stage ends wit
 - [x] The client path works without the Mini App, buttons only
 - [x] Mini App correct in light and dark themes at 360 px; response types shared with the server
 - [x] Tenant-isolation test passes on every route
-- [ ] Broadcast limits hold; moderation of the first three works
-- [ ] Not one byte of media on our disk: `fileId` only
-- [ ] `ops/restore.sh` really restores the database, verified
-- [ ] `DEPLOY.md` covers `/setdomain` and the `getWebhookInfo` check
+- [x] Broadcast limits hold; moderation of the first three works
+- [x] Not one byte of media on our disk: `fileId` only
+- [x] `ops/restore.sh` really restores the database, verified
+- [x] `DEPLOY.md` covers `/setdomain` and the `getWebhookInfo` check
 - [x] `DECISIONS.md` explains every deviation
 
 ## Stages (§15)
@@ -38,10 +38,10 @@ Checklist from §16 of the brief. Updated after every stage; each stage ends wit
 - [x] 11. Mini App: `initData`, API, client calendar, `slots.ts` reused on the client
 - [x] 12. Mini App for the master: week view, manual booking
 - [x] 13. Clients, card, history, notes
-- [ ] 14. Broadcasts with limits and moderation, "a window opened"
-- [ ] 15. `dedicated` bot mode, token encryption, routing by `botId`
-- [ ] 16. Admin panel, free-tier limit, backups, alerts, `DEPLOY.md`
-- [ ] 17. `pnpm seed`
+- [x] 14. Broadcasts with limits and moderation, "a window opened"
+- [x] 15. `dedicated` bot mode, token encryption, routing by `botId`
+- [x] 16. Admin panel, free-tier limit, backups, alerts, `DEPLOY.md`
+- [x] 17. `pnpm seed`
 
 ## Notes
 
@@ -78,3 +78,17 @@ flagging the client while leaving the booking intact; cancellation and reschedul
 extinguishing every scheduled reminder; and the full deep-link-to-cancellation
 client journey driven through the real webhook. Deviations D14-D19 concern these
 stages.
+
+**Stages 14-17 and deployment.** Broadcasts run in the queue's slow lane behind
+every transactional message, with the monthly quota, the 48-hour cooldown, the
+seven-day tenant age and the empty-audience check enforced in one place, the
+first three sends held for a moderator, an unsubscribe button on every message
+and consent re-checked per recipient at send time. "A window opened" reuses that
+whole pipeline with a different body, offered as one button on the cancellation
+notice. Dedicated bots encrypt the token with AES-256-GCM, re-point the tenant,
+flag every stored `file_id` for re-upload and install the webhook. `/admin`
+carries the moderation queue and the dead-job list.
+
+`ops/restore.sh` was run against a real dump of the seeded database: 17 tables,
+both EXCLUDE constraints and all 80 appointments came back, ending in
+`restore verified`. 319 tests pass; `packages/shared` is at 99.4% of statements.

@@ -6,7 +6,9 @@ export * from './shutdown.js';
 
 export * from './services/availability.js';
 export * from './services/booking.js';
+export * from './services/broadcasts.js';
 export * from './services/cache.js';
+export * from './services/dedicated-bot.js';
 export * from './services/queue.js';
 
 export * from './telegram/registry.js';

@@ -8,6 +8,8 @@
 import { type BotRow, type Database, pgSessionStorage } from '@alnotica/db';
 import { SlidingWindowLimiter } from '@alnotica/shared';
 import { type Bot, Composer, session } from 'grammy';
+import { registerAdminFlow } from './admin-flow.js';
+import { registerBroadcastFlow } from './broadcast-flow.js';
 import { registerClientFlow } from './client-flow.js';
 import { type BotContext, type BotDeps, attachDeps } from './context.js';
 import { alwaysAnswerCallbacks, errorBoundary, rateLimit } from './middleware.js';
@@ -51,9 +53,17 @@ export function wireBot(bot: Bot, options: WireOptions): void {
   typed.use(alwaysAnswerCallbacks(deps.log));
   typed.use(rateLimit(limiter, deps.log));
 
+  const admin = new Composer<BotContext>();
+  registerAdminFlow(admin);
+  typed.use(admin);
+
   const staff = new Composer<BotContext>();
   registerStaffFlow(staff);
   typed.use(staff);
+
+  const broadcasts = new Composer<BotContext>();
+  registerBroadcastFlow(broadcasts);
+  typed.use(broadcasts);
 
   const client = new Composer<BotContext>();
   registerClientFlow(client);

@@ -149,3 +149,36 @@ Vitest runs files in parallel and each database test truncates every table in
 `beforeEach`. Sharing one schema means one file wiping another's fixtures
 mid-assertion. Each worker gets `test_<n>` with `search_path` falling back to
 `public`, so extensions stay shared and the suite stays parallel.
+
+## Broadcasts, plans and operations
+
+### D20. A broadcast awaiting moderation counts against the monthly quota
+`countSince` includes `pending_moderation`, and the 48-hour cooldown is measured
+from submission rather than from delivery. Otherwise a brand-new tenant could
+queue up a dozen broadcasts while the moderator was asleep and have them all go
+out at once on approval — which is exactly the pattern that gets a shared bot
+reported.
+
+### D21. An empty patch is a no-op, not an error
+Drizzle rejects an `UPDATE ... SET` with nothing to set. Every repository
+`update` returns the current row instead, so a caller that computed an empty
+change set does not crash.
+
+### D22. `set-webhook` prints `getWebhookInfo` back
+Installing a webhook almost always "succeeds"; what fails is Telegram reaching
+the host afterwards, and that only shows up in `getWebhookInfo.last_error_message`.
+The script reads it back and DEPLOY.md tells the operator to look at it, because
+a silent `SSL error` there is the single most common reason a fresh deployment
+does not work.
+
+### D23. Alerting uses its own bot token and its own HTTP call
+`sendAlert` goes straight to `api.telegram.org` rather than through the bot
+registry, and `ALERT_TG_TOKEN` is a different bot. The registry needs the
+database, and the database being unreachable is one of the conditions being
+alerted on; a shared token would mean the alarm is silent exactly when it matters.
+
+### D24. The seed produces a believable month, not a uniform one
+Sixty past appointments with roughly 8% no-shows and 10% cancellations, delivery
+records for the completed ones, two masters, a lunch break in the schedule, and
+two clients with no Telegram account. A demo where every visit completed makes
+the statistics screen — the thing the master is paying for — look like a stub.

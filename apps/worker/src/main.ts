@@ -13,6 +13,7 @@ import {
   parseEncryptionKey,
 } from '@alnotica/core';
 import { botRepo, createDb } from '@alnotica/db';
+import { type AlertState, runAlertCycle } from './alerts.js';
 import { wireBot } from './bot/index.js';
 import { createJobContext } from './jobs/context.js';
 import { processBatch } from './runner.js';
@@ -66,6 +67,8 @@ if (config.WEBHOOK_MODE === 'off') {
 /* ------------------------------- queue loop ------------------------------- */
 
 const lastRun = new Map<string, number>();
+const alertState: AlertState = { lastProblems: '', lastSentMs: 0 };
+const ALERT_INTERVAL_MS = 5 * 60_000;
 
 async function tick(): Promise<void> {
   const result = await processBatch(ctx, {
@@ -74,6 +77,13 @@ async function tick(): Promise<void> {
     queue,
   });
   if (result.claimed > 0) log.debug({ ...result, workerId }, 'batch processed');
+
+  // Alerting is deliberately outside the scheduler task list: it has to keep
+  // running even when the database — and therefore the task list — is unhappy.
+  if (config.ALERTS_ENABLED && Date.now() - (lastRun.get('alerts') ?? 0) >= ALERT_INTERVAL_MS) {
+    lastRun.set('alerts', Date.now());
+    await runAlertCycle(ctx, alertState).catch((err) => log.error({ err }, 'alert cycle failed'));
+  }
 
   for (const task of dueTasks(lastRun, Date.now())) {
     lastRun.set(task.name, Date.now());

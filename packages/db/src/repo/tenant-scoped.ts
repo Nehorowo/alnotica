@@ -113,6 +113,8 @@ export function forTenant(db: Database, tenantId: string) {
 
     async update(id: string, patch: Partial<ServiceRow>): Promise<ServiceRow | null> {
       const { tenantId: _ignored, id: _id, ...safe } = patch;
+      // Drizzle rejects an empty SET; an empty patch is a no-op, not an error.
+      if (Object.keys(safe).length === 0) return services.byId(id);
       const [row] = await db
         .update(service)
         .set(safe)
@@ -203,6 +205,7 @@ export function forTenant(db: Database, tenantId: string) {
 
     async update(id: string, patch: Partial<StaffRow>): Promise<StaffRow | null> {
       const { tenantId: _t, id: _i, ...safe } = patch;
+      if (Object.keys(safe).length === 0) return staffMembers.byId(id);
       const [row] = await db
         .update(staff)
         .set(safe)
@@ -367,6 +370,7 @@ export function forTenant(db: Database, tenantId: string) {
 
     async update(id: string, patch: Partial<ClientRow>): Promise<ClientRow | null> {
       const { tenantId: _t, id: _i, ...safe } = patch;
+      if (Object.keys(safe).length === 0) return clients.byId(id);
       const [row] = await db
         .update(client)
         .set(safe)
@@ -416,6 +420,21 @@ export function forTenant(db: Database, tenantId: string) {
         .orderBy(asc(client.name))
         .limit(limit)
         .offset(offset);
+    },
+
+    /** Client ids who have ever completed a given service — a broadcast audience. */
+    async idsWhoUsedService(serviceId: string): Promise<string[]> {
+      const rows = await db
+        .selectDistinct({ id: appointment.clientId })
+        .from(appointment)
+        .where(
+          and(
+            eq(appointment.tenantId, tenantId),
+            eq(appointment.serviceId, serviceId),
+            eq(appointment.status, 'completed'),
+          ),
+        );
+      return rows.map((r) => r.id);
     },
 
     async count(): Promise<number> {
@@ -714,6 +733,7 @@ export function forTenant(db: Database, tenantId: string) {
 
     async update(id: string, patch: Partial<BroadcastRow>): Promise<BroadcastRow | null> {
       const { tenantId: _t, id: _i, ...safe } = patch;
+      if (Object.keys(safe).length === 0) return broadcasts.byId(id);
       const [row] = await db
         .update(broadcast)
         .set(safe)
@@ -731,7 +751,13 @@ export function forTenant(db: Database, tenantId: string) {
         .limit(limit);
     },
 
-    /** Counts towards the four-a-month quota; drafts and rejections do not. */
+    /**
+     * Counts towards the four-a-month quota.
+     *
+     * A broadcast waiting on a moderator counts: it is going to go out once
+     * approved, and leaving it uncounted would let a brand-new tenant queue up a
+     * dozen for the moderator and then send them all. Drafts and rejections do not.
+     */
     async countSince(sinceMs: number): Promise<number> {
       const [row] = await db
         .select({ n: sql<number>`count(*)::int` })
@@ -740,7 +766,7 @@ export function forTenant(db: Database, tenantId: string) {
           and(
             eq(broadcast.tenantId, tenantId),
             gte(broadcast.createdAt, new Date(sinceMs)),
-            inArray(broadcast.status, ['approved', 'sending', 'sent']),
+            inArray(broadcast.status, ['pending_moderation', 'approved', 'sending', 'sent']),
           ),
         );
       return row?.n ?? 0;
@@ -756,14 +782,19 @@ export function forTenant(db: Database, tenantId: string) {
       return row?.n ?? 0;
     },
 
+    /**
+     * When this tenant last put a broadcast into the world — sent or merely
+     * submitted. The cooldown is measured from submission, not from delivery, so
+     * that two sends cannot be queued back to back while a moderator is asleep.
+     */
     async lastSentAt(): Promise<Date | null> {
       const [row] = await db
-        .select({ at: broadcast.startedAt })
+        .select({
+          at: sql<string | null>`max(coalesce(${broadcast.startedAt}, ${broadcast.createdAt}))`,
+        })
         .from(broadcast)
-        .where(and(eq(broadcast.tenantId, tenantId), isNotNull(broadcast.startedAt)))
-        .orderBy(desc(broadcast.startedAt))
-        .limit(1);
-      return row?.at ?? null;
+        .where(and(eq(broadcast.tenantId, tenantId), ne(broadcast.status, 'rejected')));
+      return row?.at ? new Date(row.at) : null;
     },
 
     async recordProgress(id: string, sent: number, failed: number): Promise<void> {
@@ -861,6 +892,28 @@ export function forTenant(db: Database, tenantId: string) {
           ),
         );
       return rows.map((r) => ({ ...r, status: appointmentStatusSchema.parse(r.status) }));
+    },
+
+    /**
+     * Everyone this tenant is actually allowed to send marketing to: has a
+     * Telegram id, accepted the notice, has not blocked the bot and has not
+     * opted out. Every audience filter starts from this set.
+     */
+    async reachableClients(limit = 2000): Promise<ClientRow[]> {
+      return db
+        .select()
+        .from(client)
+        .where(
+          and(
+            eq(client.tenantId, tenantId),
+            isNotNull(client.telegramId),
+            isNotNull(client.consentAt),
+            eq(client.isBlocked, false),
+            eq(client.marketingOptOut, false),
+          ),
+        )
+        .orderBy(asc(client.createdAt))
+        .limit(limit);
     },
 
     /** Clients who have not been seen for a while — the "a window opened" audience. */

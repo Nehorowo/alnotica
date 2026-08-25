@@ -1,0 +1,50 @@
+# Automatic TLS. Telegram will not register a webhook against an invalid
+# certificate, so this is load-bearing rather than a nicety.
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# The webhook. Telegram publishes its source ranges, but they change; the
+	# secret-token header is the real authentication and it is checked in the app.
+	handle /tg/* {
+		reverse_proxy api:3000
+	}
+
+	handle /api/* {
+		reverse_proxy api:3000
+	}
+
+	# The Mini App bundle, served by Fastify from the same image.
+	handle /miniapp/* {
+		reverse_proxy api:3000
+	}
+
+	handle /healthz {
+		reverse_proxy api:3000
+	}
+
+	# Readiness is for our own alerting, not for the public.
+	handle /readyz {
+		@local remote_ip private_ranges
+		reverse_proxy @local api:3000
+		respond 404
+	}
+
+	handle {
+		respond "Alnotica" 200
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# The Mini App runs inside Telegram's WebView, which frames it.
+		Content-Security-Policy "default-src 'self'; script-src 'self' https://telegram.org; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors https://web.telegram.org https://telegram.org"
+		-Server
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

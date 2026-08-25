@@ -15,9 +15,9 @@
     "typecheck": "turbo run typecheck",
     "test": "vitest run",
     "test:watch": "vitest",
-    "migrate": "node --experimental-strip-types packages/db/src/cli/migrate.ts",
-    "seed": "node --experimental-strip-types packages/db/src/cli/seed.ts",
-    "set-webhook": "node --experimental-strip-types ops/set-webhook.ts"
+    "migrate": "pnpm exec turbo run build --filter=@alnotica/db && node packages/db/dist/cli/migrate.js",
+    "seed": "pnpm exec turbo run build --filter=@alnotica/db && node packages/db/dist/cli/seed.js",
+    "set-webhook": "pnpm exec turbo run build --filter=@alnotica/worker && node apps/worker/dist/cli/set-webhook.js"
   },
   "devDependencies": {
     "@alnotica/core": "workspace:*",
