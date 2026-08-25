@@ -81,11 +81,15 @@ notice. Dedicated bots encrypt the token with AES-256-GCM, re-point the tenant,
 flag every stored `file_id` for re-upload and install the webhook. `/admin`
 carries the moderation queue and the dead-job list. D20-D24.
 
-**Quality pass.** Escaping is enforced by a test that reads the bot's own
+**Quality and correctness pass.** Escaping is enforced by a test that reads the bot's own
 sources; the API composes no user-visible text; every callback dispatcher was
 split rather than suppressed, so `pnpm lint` is clean with no ignores; column
 types are narrowed in the schema, and each surviving `as` says why it is safe.
-D25-D30.
+Three real bugs came out of it: the worker's queue loop used to block on a
+`getMe` round trip, so an unreachable Bot API stopped reminders being sent at
+all; expiring an unconfirmed booking was queued as a reminder job and would have
+sent a reminder instead; and `jobRepo.claim` returned timestamps as text through
+a field typed `Date`. D25-D32.
 
 ## Verified by hand, not only by tests
 
@@ -99,6 +103,9 @@ D25-D30.
   with no secret header returns 401, and `/miniapp/` serves the built bundle.
 - The worker booted, ran its scheduler against the seeded tenant, and shut down
   cleanly on SIGTERM.
+- `pnpm dev` builds the workspace, applies migrations, and brings up the API
+  (`api listening`), the worker (`worker started`) and Vite
+  (`http://localhost:5173/miniapp/`) with prefixed output; Ctrl-C stops all three.
 
 ## Not verified here
 
