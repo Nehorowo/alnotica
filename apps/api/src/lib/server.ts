@@ -13,6 +13,9 @@ export function createServer(ctx: AppContext) {
     // Telegram's updates are small; anything larger did not come from Telegram.
     bodyLimit: 1_000_000,
     trustProxy: true,
+    // Per-request logging is noise in production, where Caddy already keeps an
+    // access log; in development it is how you watch the webhook arrive.
+    // (Fastify 5 warns that this moves under `logController` in v6.)
     disableRequestLogging: ctx.env.NODE_ENV === 'production',
   });
 }

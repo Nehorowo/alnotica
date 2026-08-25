@@ -46,38 +46,30 @@ Checklist from §16 of the brief. Updated after every stage; each stage ends wit
 ## Notes
 
 **Stage 1 + 3 + 4.** `packages/shared` is complete and covered at 99% of
-statements (179 tests). The slot engine, the state machine, reminder planning,
-plan limits, broadcast gates, statistics, the callback codec, deep links and the
-`initData` helpers are all pure and browser-safe. Deviations are recorded in
-`DECISIONS.md` (D6-D11 concern this stage).
+statements. The slot engine, the state machine, reminder planning, plan limits,
+broadcast gates, statistics, the callback codec, deep links and the `initData`
+helpers are all pure and browser-safe. Deviations D6-D11 concern this stage.
 
-**Stage 2.** `packages/db` is complete: Drizzle schema, one hand-written SQL
-migration with `btree_gist` and both EXCLUDE constraints, and tenant-scoped
-repositories where the tenant filter cannot be forgotten because it is bound at
-construction. 37 integration tests run against a real Postgres 16, including two
-transactions racing for the same slot (exactly one wins, the loser gets `23P01`),
-tenant isolation on reads and writes, queue claiming under `FOR UPDATE SKIP
-LOCKED`, reminder cancellation by `cancelKey`, and a Telegram id past 2^53
-surviving the round trip. Deviations D12-D13 concern this stage.
+**Stage 2.** Drizzle schema, one hand-written SQL migration with `btree_gist` and
+both EXCLUDE constraints, and tenant-scoped repositories where the tenant filter
+cannot be forgotten because it is bound at construction. Integration tests run
+against a real Postgres 16, including two transactions racing for the same slot
+(exactly one wins, the loser gets `23P01`), tenant isolation on reads and writes,
+queue claiming under `FOR UPDATE SKIP LOCKED`, reminder cancellation by
+`cancelKey`, and a Telegram id past 2^53 surviving the round trip. D12-D13.
 
-**Stages 5-10.** `packages/core` (D14) carries the server-side shared code: env
-parsing, logging with redaction, AES-256-GCM token envelopes, `initData`
-verification, the typed queue facade, the availability service with its 60-second
-cache, and booking orchestration. `apps/api` serves the webhook, the Mini App API
-and the health probes; `apps/worker` runs the bot, the queue loop and the
-scheduler.
+**Stages 5-10.** `packages/core` (D14) carries the server-side shared code:
+env parsing, logging with redaction, AES-256-GCM token envelopes, `initData`
+verification, the typed queue facade, the availability service with its
+60-second cache, and booking orchestration. `apps/api` serves the webhook, the
+Mini App API and the health probes; `apps/worker` runs the bot, the queue loop
+and the scheduler. D14-D19.
 
-276 tests pass, `packages/shared` is at 99% of statements. The suite now covers,
-end to end and against a real Postgres and a real grammY client on a mock
-transport: a webhook without the secret header answering 401 and writing nothing;
-a repeated `update_id` and a repeated `Idempotency-Key` producing no duplicates;
-`initData` rejected for a flipped byte, for tampered data, for another bot's
-token and for a stale `auth_date`; tenant isolation answering 404 on every route;
-`429` retried within the plugin budget then deferred then finally buried; `403`
-flagging the client while leaving the booking intact; cancellation and reschedule
-extinguishing every scheduled reminder; and the full deep-link-to-cancellation
-client journey driven through the real webhook. Deviations D14-D19 concern these
-stages.
+**Stages 11-13.** The Mini App: Vanilla TS + Vite + Tailwind, every colour from
+Telegram `themeParams` with fallbacks for both schemes, response schemas
+imported from `packages/shared` and used to validate on the client too,
+`textContent` everywhere, 44 px tap targets, skeletons and a retry instead of
+endless spinners, horizontal scroll confined to the day strip.
 
 **Stages 14-17 and deployment.** Broadcasts run in the queue's slow lane behind
 every transactional message, with the monthly quota, the 48-hour cooldown, the
@@ -87,8 +79,30 @@ and consent re-checked per recipient at send time. "A window opened" reuses that
 whole pipeline with a different body, offered as one button on the cancellation
 notice. Dedicated bots encrypt the token with AES-256-GCM, re-point the tenant,
 flag every stored `file_id` for re-upload and install the webhook. `/admin`
-carries the moderation queue and the dead-job list.
+carries the moderation queue and the dead-job list. D20-D24.
 
-`ops/restore.sh` was run against a real dump of the seeded database: 17 tables,
-both EXCLUDE constraints and all 80 appointments came back, ending in
-`restore verified`. 319 tests pass; `packages/shared` is at 99.4% of statements.
+**Quality pass.** Escaping is enforced by a test that reads the bot's own
+sources; the API composes no user-visible text; every callback dispatcher was
+split rather than suppressed, so `pnpm lint` is clean with no ignores; column
+types are narrowed in the schema, and each surviving `as` says why it is safe.
+D25-D30.
+
+## Verified by hand, not only by tests
+
+- `ops/restore.sh` run against a real dump of the seeded database: 17 tables,
+  both EXCLUDE constraints and all 80 appointments came back, ending in
+  `restore verified`.
+- `pnpm migrate`, `pnpm seed`, `pnpm lint`, `pnpm typecheck` and `pnpm test` all
+  run green from the root.
+- The API booted for real: `/healthz` returns `{"ok":true}`, `/readyz` reports
+  `{"ok":true,"db":true,"queueDepth":0,"unprocessedUpdates":0}`, a webhook POST
+  with no secret header returns 401, and `/miniapp/` serves the built bundle.
+- The worker booted, ran its scheduler against the seeded tenant, and shut down
+  cleanly on SIGTERM.
+
+## Not verified here
+
+The Docker image and `docker-compose.yml` are written but not built: there is no
+Docker daemon in this environment. Everything they run — the migration CLI, both
+process entrypoints, the backup and restore scripts — has been executed directly
+on the same Node and Postgres versions the image pins.

@@ -52,15 +52,31 @@ const ctx = createJobContext({ db: handle.db, queue, env: config, log, registry 
 if (config.WEBHOOK_MODE === 'off') {
   // Development: no public HTTPS, so updates come by long polling. The handlers
   // are identical either way — only the transport differs.
+  //
+  // Deliberately not awaited. Starting a bot means a getMe round trip to
+  // Telegram, and blocking on that would mean an unreachable or slow Bot API
+  // stops the queue loop from running at all — including the reminders, which
+  // need nothing from Telegram until the moment they are sent.
+  void startLongPolling();
+}
+
+async function startLongPolling(): Promise<void> {
   const bots = await botRepo(handle.db).listActive();
   for (const row of bots) {
-    const resolved = await registry.byId(row.id);
-    if (!resolved) continue;
-    void resolved.bot.start({
-      drop_pending_updates: false,
-      onStart: (me) => log.info({ username: me.username, mode: row.mode }, 'long polling started'),
-    });
-    shutdown.onShutdown(() => resolved.bot.stop());
+    try {
+      const resolved = await registry.byId(row.id);
+      if (!resolved) continue;
+      void resolved.bot.start({
+        drop_pending_updates: false,
+        onStart: (me) =>
+          log.info({ username: me.username, mode: row.mode }, 'long polling started'),
+      });
+      shutdown.onShutdown(() => resolved.bot.stop());
+    } catch (err) {
+      // One tenant's revoked or mistyped token must not stop the others, and
+      // must not stop the queue.
+      log.error({ err, botId: row.id, mode: row.mode }, 'could not start polling for a bot');
+    }
   }
 }
 

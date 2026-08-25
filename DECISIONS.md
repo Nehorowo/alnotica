@@ -217,3 +217,19 @@ migration. That removed a dozen scattered `as Plan` / `as Currency` casts. The
 handful of assertions that remain each carry a comment saying what makes them
 safe, as the brief requires; values arriving from jsonb or from a session row are
 parsed with Zod instead.
+
+### D29. The worker's queue loop does not wait for Telegram
+Starting a bot means a `getMe` round trip. Awaiting that at boot meant an
+unreachable or slow Bot API stopped the queue loop from running at all —
+including the reminders, which need nothing from Telegram until the moment they
+are sent. Long polling is now started fire-and-forget, and one tenant's revoked
+token logs an error instead of taking the process down.
+
+### D30. `name` is redacted only where it is nested
+Pino's top-level `name` is the logger's own name — `api` or `worker` — and
+redacting it makes the two processes indistinguishable in the log. The redaction
+list therefore carries `*.name`, `client.name` and `staff.name`, but not the bare
+`name`. Identifiers (`telegramId`, `tenantId`, `appointmentId`, `jobId`) are
+deliberately *not* redacted: without them an incident cannot be traced at all,
+and an id on its own is not personal data in the way a name and a phone number
+are. A test asserts both halves of that.

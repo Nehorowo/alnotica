@@ -20,8 +20,11 @@ export const REDACTED_PATHS = [
   'WEBHOOK_SECRET',
   'phone',
   '*.phone',
-  'name',
+  // `*.name` only: the bare `name` field is pino's own logger name ("api",
+  // "worker"), which is how you tell the two processes apart in the log.
   '*.name',
+  'client.name',
+  'staff.name',
   'text',
   '*.text',
   'caption',
