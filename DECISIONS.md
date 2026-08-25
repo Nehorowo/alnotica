@@ -106,3 +106,46 @@ Not "attempts >= max_attempts". The worker is the only thing that gives up, and
 it does so by calling `fail(id, err, null)` — sometimes before the attempt budget
 is spent, when the error is clearly permanent. Deriving deadness from the attempt
 counter would have hidden exactly those jobs from the admin panel.
+
+## Architecture
+
+### D14. A sixth package, `packages/core`, for server-side shared code
+The brief lists five workspaces. Both `apps/api` and `apps/worker` need the same
+env parsing, logger, AES envelope, `initData` HMAC, queue facade, availability
+service, booking orchestration and bot registry. Putting that in
+`packages/shared` would break the one hard rule about it — that it stays free of
+Node built-ins so it can be bundled for the Mini App. Duplicating it across the
+two apps would guarantee they drift. `packages/core` depends on `shared` and
+`db`, is never imported by the browser bundle, and keeps `shared` genuinely
+isomorphic.
+
+### D15. The plain-button booking path is the primary implementation
+The brief calls the non-Mini-App route a fallback. It is written here as the main
+path — the Mini App button is one extra row on the same keyboard — because the
+button path is the one that works on every Telegram client, and building it
+second tends to mean building it badly.
+
+### D16. `slot_taken` and `slot_not_available` are different answers
+The booking gate classifies a rejected start into `taken` (on the published grid,
+but occupied) and `off_grid` (not a time we offer). The first gets "someone just
+took it, here is what is left" plus live alternatives; the second gets "choose
+another time". Collapsing the two would show the wrong message in the case that
+actually happens to real clients.
+
+### D17. A cancelled job releases its dedupe key
+`cancelByKey` nulls `dedupe_key` as well as finishing the row. Without it, a
+reschedule that has to roll back could never restore the reminders it had just
+cancelled: the dead row would still own the key and every re-insert would be
+dropped silently, leaving the restored appointment with no reminders. A test
+covers exactly this path.
+
+### D18. The attempt budget also applies to Telegram-requested delays
+A `429` with a long `retry_after` sends the job back to the queue rather than
+parking a worker — but it still counts as an attempt. Otherwise a chat that
+floods us forever produces a job that cycles for the lifetime of the deployment.
+
+### D19. Test workers get a schema each
+Vitest runs files in parallel and each database test truncates every table in
+`beforeEach`. Sharing one schema means one file wiping another's fixtures
+mid-assertion. Each worker gets `test_<n>` with `search_path` falling back to
+`public`, so extensions stay shared and the suite stays parallel.

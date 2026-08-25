@@ -1,6 +1,15 @@
 import { and, eq, sql } from 'drizzle-orm';
 import type { Database } from '../client.js';
-import { type StaffRow, type TenantRow, staff, tenant } from '../schema.js';
+import {
+  type AppointmentRow,
+  type BroadcastRow,
+  type StaffRow,
+  type TenantRow,
+  appointment,
+  broadcast,
+  staff,
+  tenant,
+} from '../schema.js';
 
 export interface CreateTenantInput {
   readonly slug: string;
@@ -65,6 +74,49 @@ export function tenantRepo(db: Database) {
         .innerJoin(tenant, eq(tenant.id, staff.tenantId))
         .where(and(eq(staff.telegramId, telegramId), eq(staff.isActive, true)));
       return rows;
+    },
+
+    /**
+     * Resolves a globally unique appointment ref (from an `r_<ref>` deep link) to
+     * its tenant in one query. Scanning every tenant for the ref would be correct
+     * and quadratic; `appointment.ref` is unique precisely so this can be direct.
+     */
+    async byAppointmentRef(
+      ref: string,
+    ): Promise<{ tenant: TenantRow; appointment: AppointmentRow } | null> {
+      const [row] = await db
+        .select({ tenant, appointment })
+        .from(appointment)
+        .innerJoin(tenant, eq(tenant.id, appointment.tenantId))
+        .where(eq(appointment.ref, ref))
+        .limit(1);
+      return row ?? null;
+    },
+
+    /** Same, by primary key — the queue stores appointment ids, not tenant ids. */
+    async byAppointmentId(
+      id: string,
+    ): Promise<{ tenant: TenantRow; appointment: AppointmentRow } | null> {
+      const [row] = await db
+        .select({ tenant, appointment })
+        .from(appointment)
+        .innerJoin(tenant, eq(tenant.id, appointment.tenantId))
+        .where(eq(appointment.id, id))
+        .limit(1);
+      return row ?? null;
+    },
+
+    /** Resolves a broadcast id to its tenant, for the queue's slow lane. */
+    async byBroadcastId(
+      id: string,
+    ): Promise<{ tenant: TenantRow; broadcast: BroadcastRow } | null> {
+      const [row] = await db
+        .select({ tenant, broadcast })
+        .from(broadcast)
+        .innerJoin(tenant, eq(tenant.id, broadcast.tenantId))
+        .where(eq(broadcast.id, id))
+        .limit(1);
+      return row ?? null;
     },
 
     async listActive(): Promise<TenantRow[]> {

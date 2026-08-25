@@ -22,6 +22,7 @@ export default defineConfig({
     alias: {
       '@alnotica/shared': new URL('./packages/shared/src/index.ts', import.meta.url).pathname,
       '@alnotica/db': new URL('./packages/db/src/index.ts', import.meta.url).pathname,
+      '@alnotica/core': new URL('./packages/core/src/index.ts', import.meta.url).pathname,
     },
   },
 });

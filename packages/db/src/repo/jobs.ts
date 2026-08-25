@@ -148,11 +148,16 @@ export function jobRepo(db: Database) {
      *
      * This is the single most important query in the reminder pipeline: a client
      * who cancels and still gets reminded has lost trust in the product.
+     *
+     * The dedupe key is released as well. Without that, a reschedule that has to
+     * be rolled back could never re-create the reminders it just cancelled — the
+     * dead row would keep claiming the key and every re-insert would be silently
+     * dropped, leaving the restored appointment with no reminders at all.
      */
     async cancelByKey(cancelKey: string): Promise<number> {
       const rows = await db
         .update(job)
-        .set({ finishedAt: new Date(), lastError: 'cancelled' })
+        .set({ finishedAt: new Date(), lastError: 'cancelled', dedupeKey: null })
         .where(and(eq(job.cancelKey, cancelKey), isNull(job.finishedAt)))
         .returning({ id: job.id });
       return rows.length;

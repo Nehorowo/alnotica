@@ -1,0 +1,102 @@
+import { randomUUID } from 'node:crypto';
+/**
+ * The worker process: the queue loop, the scheduler, and — in development — long
+ * polling instead of a webhook.
+ */
+import process from 'node:process';
+import {
+  BotRegistry,
+  createLogger,
+  createQueue,
+  env,
+  installShutdownHandlers,
+  parseEncryptionKey,
+} from '@alnotica/core';
+import { botRepo, createDb } from '@alnotica/db';
+import { wireBot } from './bot/index.js';
+import { createJobContext } from './jobs/context.js';
+import { processBatch } from './runner.js';
+import { SCHEDULER_TASKS, dueTasks } from './scheduler.js';
+
+const config = env();
+const log = createLogger({ level: config.LOG_LEVEL, name: 'worker' });
+const shutdown = installShutdownHandlers(log);
+
+const workerId = config.WORKER_ID || `worker-${randomUUID().slice(0, 8)}`;
+
+const handle = createDb({ url: config.DATABASE_URL, max: config.DATABASE_POOL_MAX });
+shutdown.onShutdown(() => handle.close());
+
+const queue = createQueue(handle.db);
+const encryptionKey = parseEncryptionKey(config.TOKEN_ENCRYPTION_KEY);
+
+const registry = new BotRegistry({
+  db: handle.db,
+  log,
+  sharedBotToken: config.BOT_TOKEN,
+  encryptionKey,
+  configure: (bot, row) => {
+    wireBot(bot, {
+      db: handle.db,
+      botRow: row,
+      deps: { db: handle.db, queue, env: config, log, registry },
+    });
+  },
+});
+
+const ctx = createJobContext({ db: handle.db, queue, env: config, log, registry });
+
+/* --------------------------------- polling -------------------------------- */
+
+if (config.WEBHOOK_MODE === 'off') {
+  // Development: no public HTTPS, so updates come by long polling. The handlers
+  // are identical either way — only the transport differs.
+  const bots = await botRepo(handle.db).listActive();
+  for (const row of bots) {
+    const resolved = await registry.byId(row.id);
+    if (!resolved) continue;
+    void resolved.bot.start({
+      drop_pending_updates: false,
+      onStart: (me) => log.info({ username: me.username, mode: row.mode }, 'long polling started'),
+    });
+    shutdown.onShutdown(() => resolved.bot.stop());
+  }
+}
+
+/* ------------------------------- queue loop ------------------------------- */
+
+const lastRun = new Map<string, number>();
+
+async function tick(): Promise<void> {
+  const result = await processBatch(ctx, {
+    workerId,
+    concurrency: config.WORKER_CONCURRENCY,
+    queue,
+  });
+  if (result.claimed > 0) log.debug({ ...result, workerId }, 'batch processed');
+
+  for (const task of dueTasks(lastRun, Date.now())) {
+    lastRun.set(task.name, Date.now());
+    try {
+      const outcome = await task.run(ctx);
+      if (typeof outcome === 'number' && outcome > 0) {
+        log.info({ task: task.name, count: outcome }, 'scheduler task did work');
+      }
+    } catch (err) {
+      log.error({ err, task: task.name }, 'scheduler task failed');
+    }
+  }
+}
+
+log.info({ workerId, webhookMode: config.WEBHOOK_MODE }, 'worker started');
+
+// A plain loop rather than setInterval: overlapping ticks would claim the same
+// jobs twice as soon as one run took longer than the interval.
+while (!shutdown.stopping) {
+  try {
+    await tick();
+  } catch (err) {
+    log.error({ err }, 'worker tick failed');
+  }
+  await new Promise((resolve) => setTimeout(resolve, config.WORKER_POLL_MS));
+}

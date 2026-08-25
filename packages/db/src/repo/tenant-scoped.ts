@@ -6,6 +6,7 @@
  * return nothing rather than someone else's data, and the API turns "nothing"
  * into a 404 — never a 403, which would confirm the row exists.
  */
+import { type StatsRow, appointmentStatusSchema } from '@alnotica/shared';
 import {
   and,
   asc,
@@ -784,6 +785,8 @@ export function forTenant(db: Database, tenantId: string) {
       offsetMin: number;
       delivered: boolean;
       error?: string | null;
+      /** Explicit so the statistics window is driven by the caller's clock. */
+      sentAt?: Date;
     }): Promise<void> {
       await db
         .insert(reminderLog)
@@ -793,6 +796,7 @@ export function forTenant(db: Database, tenantId: string) {
           offsetMin: input.offsetMin,
           delivered: input.delivered,
           error: input.error ?? null,
+          ...(input.sentAt ? { sentAt: input.sentAt } : {}),
         })
         .onConflictDoNothing({ target: [reminderLog.appointmentId, reminderLog.offsetMin] });
     },
@@ -831,9 +835,13 @@ export function forTenant(db: Database, tenantId: string) {
   /* --------------------------------- stats --------------------------------- */
 
   const stats = {
-    /** One pass over the period; the arithmetic itself lives in `packages/shared`. */
-    async rows(fromMs: number, toMs: number) {
-      return db
+    /**
+     * One pass over the period; the arithmetic itself lives in `packages/shared`.
+     * The status column is `text`, so it is parsed rather than cast — a row is
+     * data from outside this process even when the process wrote it.
+     */
+    async rows(fromMs: number, toMs: number): Promise<StatsRow[]> {
+      const rows = await db
         .select({
           status: appointment.status,
           priceMinor: appointment.priceMinor,
@@ -852,6 +860,7 @@ export function forTenant(db: Database, tenantId: string) {
             lt(appointment.startsAt, new Date(toMs)),
           ),
         );
+      return rows.map((r) => ({ ...r, status: appointmentStatusSchema.parse(r.status) }));
     },
 
     /** Clients who have not been seen for a while — the "a window opened" audience. */

@@ -17,6 +17,11 @@ export interface DbOptions {
   /** Ten per process is plenty for this workload and keeps us far from max_connections. */
   readonly max?: number;
   readonly onNotice?: (notice: unknown) => void;
+  /**
+   * Postgres `search_path`. Production leaves this alone; the test harness uses
+   * it to give each Vitest worker its own schema.
+   */
+  readonly searchPath?: string;
 }
 
 export function createDb(options: DbOptions): DbHandle {
@@ -33,6 +38,7 @@ export function createDb(options: DbOptions): DbHandle {
     transform: { undefined: null },
     onnotice: options.onNotice ?? (() => {}),
     prepare: true,
+    ...(options.searchPath ? { connection: { search_path: options.searchPath } } : {}),
   });
 
   // Note: `drizzle()` mutates the client. It replaces postgres.js's date/time
