@@ -6,11 +6,11 @@
  */
 import type { WebApp } from '@twa-dev/types';
 declare global {
-  interface Window {
-    Telegram?: {
-      WebApp: WebApp;
-    };
-  }
+    interface Window {
+        Telegram?: {
+            WebApp: WebApp;
+        };
+    }
 }
 export declare function webApp(): WebApp | null;
 /** Copies `themeParams` onto CSS variables so Tailwind's tokens follow the theme. */
@@ -19,11 +19,11 @@ export declare function initTelegram(): WebApp | null;
 export declare function haptic(style?: 'light' | 'medium' | 'heavy'): void;
 export declare function notify(type: 'error' | 'success' | 'warning'): void;
 export interface MainButtonState {
-  readonly text: string;
-  readonly visible: boolean;
-  readonly enabled?: boolean;
-  readonly loading?: boolean;
-  onClick?(): void;
+    readonly text: string;
+    readonly visible: boolean;
+    readonly enabled?: boolean;
+    readonly loading?: boolean;
+    onClick?(): void;
 }
 export declare function setMainButton(state: MainButtonState): void;
 export declare function closeApp(): void;

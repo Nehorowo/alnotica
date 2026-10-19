@@ -6,11 +6,7 @@
  * as itself, not as markup.
  */
 export type Attrs = Record<string, string | number | boolean | undefined>;
-export declare function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  attrs?: Attrs,
-  children?: (Node | string)[],
-): HTMLElementTagNameMap[K];
+export declare function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs?: Attrs, children?: (Node | string)[]): HTMLElementTagNameMap[K];
 export declare function text(value: string): Text;
 export declare function clear(node: HTMLElement): void;
 export declare function mount(root: HTMLElement, ...children: Node[]): void;
