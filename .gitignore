@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# tsc -b writes the Mini App's declaration output here (emitDeclarationOnly).
+dist-types/
 coverage/
 .turbo/
 *.tsbuildinfo

@@ -36,7 +36,7 @@ free-tier cap.
 |---|---|
 | Tests | **374**, across 20 files, all passing |
 | Coverage of `packages/shared` | **99.38%** statements, 94.7% branches, **100%** functions |
-| `pnpm lint` (Biome) | clean, 144 files, **zero suppressions** |
+| `pnpm lint` (Biome) | clean, 137 files, **zero suppressions** |
 | `pnpm typecheck` | clean, 9 projects, `strict` + `noUncheckedIndexedAccess` + `exactOptionalPropertyTypes` |
 | `any` in source | **0** |
 | Source TypeScript | ~12 500 lines (99 files, excluding tests) |

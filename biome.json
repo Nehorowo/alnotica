@@ -1,12 +1,15 @@
 {
   "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
-  "vcs": {
-    "enabled": true,
-    "clientKind": "git",
-    "useIgnoreFile": true
-  },
+  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
   "files": {
-    "ignore": ["**/dist/**", "**/node_modules/**", "**/coverage/**", "**/.turbo/**", "**/*.md"]
+    "ignore": [
+      "**/dist/**",
+      "**/dist-types/**",
+      "**/node_modules/**",
+      "**/coverage/**",
+      "**/.turbo/**",
+      "**/*.md"
+    ]
   },
   "formatter": {
     "enabled": true,
@@ -15,11 +18,7 @@
     "lineWidth": 100
   },
   "javascript": {
-    "formatter": {
-      "quoteStyle": "single",
-      "semicolons": "always",
-      "trailingCommas": "all"
-    }
+    "formatter": { "quoteStyle": "single", "semicolons": "always", "trailingCommas": "all" }
   },
   "linter": {
     "enabled": true,
@@ -37,9 +36,7 @@
       "complexity": {
         "noExcessiveCognitiveComplexity": {
           "level": "warn",
-          "options": {
-            "maxAllowedComplexity": 25
-          }
+          "options": { "maxAllowedComplexity": 25 }
         }
       }
     }
@@ -47,13 +44,7 @@
   "overrides": [
     {
       "include": ["**/*.test.ts", "**/cli/**", "ops/**", "**/seed.ts"],
-      "linter": {
-        "rules": {
-          "suspicious": {
-            "noConsoleLog": "off"
-          }
-        }
-      }
+      "linter": { "rules": { "suspicious": { "noConsoleLog": "off" } } }
     }
   ]
 }
